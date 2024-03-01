@@ -5,7 +5,7 @@ import "time"
 var _ Message = (*Group)(nil)
 
 // This type represents object sent in a group call as described in
-// https://segment.com/docs/libraries/http/#group
+// https://hightouch.com/docs/events/event-spec#group-events
 type Group struct {
 	// This field is exported for serialization purposes and shouldn't be set by
 	// the application, its value is always overwritten by the library.

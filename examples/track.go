@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"time"
 
-	"github.com/segmentio/analytics-go/v3"
+	analytics "github.com/ht-sdks/events-sdk-go"
 )
-import "time"
 
 func main() {
 	client, _ := analytics.NewWithConfig("h97jamjwbh", analytics.Config{
@@ -29,7 +29,7 @@ func main() {
 				Event:  "Download",
 				UserId: "123456",
 				Properties: map[string]interface{}{
-					"application": "Segment Desktop",
+					"application": "HT Desktop",
 					"version":     "1.1.0",
 					"platform":    "osx",
 				},

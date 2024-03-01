@@ -13,7 +13,7 @@ package analytics
 //			.Disable("Marketo"),
 //	}
 //
-// The specifications can be found at https://segment.com/docs/spec/common/#integrations
+// The specifications can be found at https://hightouch.com/docs/events/event-spec
 type Integrations map[string]interface{}
 
 func NewIntegrations() Integrations {

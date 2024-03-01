@@ -1,9 +1,6 @@
-# analytics-go [![Circle CI](https://circleci.com/gh/segmentio/analytics-go/tree/v3.0.svg?style=shield)](https://circleci.com/gh/segmentio/analytics-go/tree/v3.0) [![go-doc](https://godoc.org/github.com/segmentio/analytics-go?status.svg)](https://godoc.org/github.com/segmentio/analytics-go)
+# events-sdk-go [![Circle CI](https://circleci.com/gh/ht-sdks/events-sdk-go/tree/v3.0.svg?style=shield)](https://circleci.com/gh/ht-sdks/events-sdk-go/tree/v3.0) [![go-doc](https://godoc.org/github.com/ht-sdks/events-sdk-go?status.svg)](https://godoc.org/github.com/ht-sdks/events-sdk-go)
 
-Segment analytics client for Go.
-
-### ⚠️ Maintenance ⚠️
-This library is in maintenance mode. It will send data as intended, but receive no new feature support and only critical maintenance updates from Segment.
+Hightouch Events SDK for Go.
 
 ## Installation
 
@@ -14,18 +11,18 @@ versions of the library.
 
 To install it in the GOPATH:
 ```
-go get https://github.com/segmentio/analytics-go
+go get https://github.com/ht-sdks/events-sdk-go
 ```
 
 ## Documentation
 
 The links bellow should provide all the documentation needed to make the best
-use of the library and the Segment API:
+use of the library and the Hightouch Events API:
 
-- [Documentation](https://segment.com/docs/libraries/go/)
-- [godoc](https://godoc.org/gopkg.in/segmentio/analytics-go.v3)
-- [API](https://segment.com/docs/libraries/http/)
-- [Specs](https://segment.com/docs/spec/)
+- [Documentation](https://hightouch.com/docs/events/sdks/go)
+- [godoc](https://godoc.org/gopkg.in/ht-sdks/events-sdk-go.v3)
+- [API](https://hightouch.com/docs/events/sdks/http)
+- [Specs](https://hightouch.com/docs/events/event-spec)
 
 ## Usage
 
@@ -35,12 +32,12 @@ package main
 import (
     "os"
 
-    "github.com/segmentio/analytics-go"
+    "github.com/ht-sdks/events-sdk-go"
 )
 
 func main() {
-    // Instantiates a client to use send messages to the segment API.
-    client := analytics.New(os.Getenv("SEGMENT_WRITE_KEY"))
+    // Instantiates a client to use send messages to the Hightouch Events API.
+    client := analytics.New(os.Getenv("WRITE_KEY"))
 
     // Enqueues a track event that will be sent asynchronously.
     client.Enqueue(analytics.Track{

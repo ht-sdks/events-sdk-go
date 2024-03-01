@@ -14,7 +14,7 @@ import (
 )
 
 // Version of the client.
-const Version = "3.0.0"
+const Version = "1.0.0"
 
 // This interface is the main API exposed by the analytics package.
 // Values that satsify this interface are returned by the client constructors
@@ -289,7 +289,7 @@ func (c *client) upload(b []byte) error {
 		return err
 	}
 
-	req.Header.Add("User-Agent", "analytics-go (version: "+Version+")")
+	req.Header.Add("User-Agent", "events-sdk-go (version: "+Version+")")
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Content-Length", strconv.Itoa(len(b)))
 	req.SetBasicAuth(c.key, "")

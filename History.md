@@ -27,7 +27,7 @@ v3.0.0 / 2016-06-02
  * 3.0 is a significant rewrite with multiple breaking changes.
  * [Quickstart](https://segment.com/docs/sources/server/go/quickstart/).
  * [Documentation](https://segment.com/docs/sources/server/go/).
- * [GoDocs](https://godoc.org/gopkg.in/segmentio/analytics-go.v3).
+ * [GoDocs](https://godoc.org/gopkg.in/ht-sdks/events-sdk-go.v3).
  * [What's New in v3](https://segment.com/docs/sources/server/go/#what-s-new-in-v3).
 
 
