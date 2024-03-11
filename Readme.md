@@ -30,23 +30,28 @@ use of the library and the Hightouch Events API:
 package main
 
 import (
-    "os"
+  "os"
 
-    "github.com/ht-sdks/events-sdk-go"
+  "github.com/ht-sdks/events-sdk-go"
 )
 
 func main() {
-    // Instantiates client to send events to the Hightouch Events API.
-    client := analytics.New(os.Getenv("WRITE_KEY"))
+  // Instantiates client to send events to the Hightouch Events API.
+  client := analytics.New(os.Getenv("WRITE_KEY"))
 
-    // Enqueues a track event that will be sent asynchronously.
-    client.Enqueue(analytics.Track{
-        UserId: "test-user",
-        Event:  "test-snippet",
-    })
+  // Flushes any queued messages and closes the client.
+  defer client.Close()
 
-    // Flushes any queued messages and closes the client.
-    client.Close()
+  // Enqueues a track event that will be sent asynchronously.
+  client.Enqueue(analytics.Track{
+    Event:  "Created Account",
+    UserId: "123",
+    Properties: analytics.Properties{
+      "application": "Desktop",
+      "version":     "1.2.3",
+      "platform":    "osx",
+    },
+  })
 }
 ```
 

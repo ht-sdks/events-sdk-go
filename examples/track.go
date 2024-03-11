@@ -28,7 +28,7 @@ func main() {
 			if err := client.Enqueue(analytics.Track{
 				Event:  "Download",
 				UserId: "123456",
-				Properties: map[string]interface{}{
+				Properties: analytics.Properties{
 					"application": "HT Desktop",
 					"version":     "1.1.0",
 					"platform":    "osx",
