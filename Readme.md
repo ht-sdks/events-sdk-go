@@ -1,10 +1,10 @@
-# events-sdk-go [![Circle CI](https://circleci.com/gh/ht-sdks/events-sdk-go/tree/v3.0.svg?style=shield)](https://circleci.com/gh/ht-sdks/events-sdk-go/tree/v3.0) [![go-doc](https://godoc.org/github.com/ht-sdks/events-sdk-go?status.svg)](https://godoc.org/github.com/ht-sdks/events-sdk-go)
+# events-sdk-go [![go-doc](https://godoc.org/github.com/ht-sdks/events-sdk-go?status.svg)](https://godoc.org/github.com/ht-sdks/events-sdk-go)
 
 Hightouch Events SDK for Go.
 
 ## Installation
 
-The package can be simply installed via go get, we recommend that you use a
+The package can be installed via `go get`, we recommend that you use a
 package version management system like the Go vendor directory or a tool like
 Godep to avoid issues related to API breaking changes introduced between major
 versions of the library.
@@ -36,7 +36,7 @@ import (
 )
 
 func main() {
-    // Instantiates a client to use send messages to the Hightouch Events API.
+    // Instantiates client to send events to the Hightouch Events API.
     client := analytics.New(os.Getenv("WRITE_KEY"))
 
     // Enqueues a track event that will be sent asynchronously.
