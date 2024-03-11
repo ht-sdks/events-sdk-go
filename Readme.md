@@ -11,7 +11,7 @@ versions of the library.
 
 To install it in the GOPATH:
 ```
-go get https://github.com/ht-sdks/events-sdk-go
+go get github.com/ht-sdks/events-sdk-go
 ```
 
 ## Documentation
