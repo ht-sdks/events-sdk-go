@@ -20,12 +20,6 @@ test: vet
 build: test
 	@go build ./...
 
-e2e:
-	@if [ "$(RUN_E2E_TESTS)" != "true" ]; then \
-	  echo "Skipping end to end tests."; else \
-		go get github.com/segmentio/library-e2e-tester/cmd/tester; \
-		tester -write-key=$(WRITE_KEY) -webhook-auth-username=$(WEBHOOK_AUTH_USERNAME) -webhook-bucket=$(WEBHOOK_BUCKET) -path='cli' -concurrency=2 -skip='advance|alias'; fi
-
 ci: dependencies test
 
-.PHONY: bootstrap dependencies vet test e2e ci
+.PHONY: bootstrap dependencies vet test ci
