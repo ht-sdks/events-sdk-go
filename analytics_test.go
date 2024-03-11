@@ -177,7 +177,7 @@ func ExampleTrack() {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		BatchSize: 1,
 		now:       mockTime,
@@ -307,7 +307,7 @@ func TestEnqueue(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -356,7 +356,7 @@ func TestTrackWithInterval(t *testing.T) {
 
 	t0 := time.Now()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint: server.URL,
 		Interval: interval,
 		Verbose:  true,
@@ -392,7 +392,7 @@ func TestTrackWithTimestamp(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -424,7 +424,7 @@ func TestTrackWithMessageId(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -456,7 +456,7 @@ func TestTrackWithContext(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -492,7 +492,7 @@ func TestTrackMany(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -524,7 +524,7 @@ func TestTrackWithIntegrations(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,

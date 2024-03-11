@@ -8,14 +8,14 @@ import (
 )
 
 func main() {
-	client, _ := analytics.NewWithConfig("h97jamjwbh", analytics.Config{
+	client, _ := analytics.NewWithConfig("<write_key>", analytics.Config{
 		Interval:  30 * time.Second,
 		BatchSize: 100,
 		Verbose:   true,
 	})
 	defer client.Close()
 
-	done := time.After(3 * time.Second)
+	done := time.After(1 * time.Second)
 	tick := time.Tick(50 * time.Millisecond)
 
 	for {

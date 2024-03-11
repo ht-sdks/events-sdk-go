@@ -82,7 +82,7 @@ type Config struct {
 
 // This constant sets the default endpoint to which client instances send
 // messages if none was explictly set.
-const DefaultEndpoint = "https://us-east-1.hightouch-events.com/v1"
+const DefaultEndpoint = "https://us-east-1.hightouch-events.com"
 
 // This constant sets the default flush interval used by client instances if
 // none was explicitly set.
