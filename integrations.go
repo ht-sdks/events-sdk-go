@@ -1,13 +1,13 @@
-package analytics
+package htevents
 
 // This type is used to represent integrations in messages that support it.
 // It is a free-form where values are most often booleans that enable or
 // disable integrations.
 // Here's a quick example of how this type is meant to be used:
 //
-//	analytics.Track{
+//	htevents.Track{
 //		UserId:       "0123456789",
-//		Integrations: analytics.NewIntegrations()
+//		Integrations: htevents.NewIntegrations()
 //			.EnableAll()
 //			.Disable("Salesforce")
 //			.Disable("Marketo"),

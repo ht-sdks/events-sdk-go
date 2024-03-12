@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import (
 	"log"
@@ -6,23 +6,23 @@ import (
 )
 
 // Instances of types implementing this interface can be used to define where
-// the analytics client logs are written.
+// the htevents client logs are written.
 type Logger interface {
 
-	// Analytics clients call this method to log regular messages about the
+	// htevents clients call this method to log regular messages about the
 	// operations they perform.
 	// Messages logged by this method are usually tagged with an `INFO` log
 	// level in common logging libraries.
 	Logf(format string, args ...interface{})
 
-	// Analytics clients call this method to log errors they encounter while
+	// htevents clients call this method to log errors they encounter while
 	// sending events to the backend servers.
 	// Messages logged by this method are usually tagged with an `ERROR` log
 	// level in common logging libraries.
 	Errorf(format string, args ...interface{})
 }
 
-// This function instantiate an object that statisfies the analytics.Logger
+// This function instantiate an object that statisfies the htevents.Logger
 // interface and send logs to standard logger passed as argument.
 func StdLogger(logger *log.Logger) Logger {
 	return stdLogger{
@@ -43,5 +43,5 @@ func (l stdLogger) Errorf(format string, args ...interface{}) {
 }
 
 func newDefaultLogger() Logger {
-	return StdLogger(log.New(os.Stderr, "hightouch ", log.LstdFlags))
+	return StdLogger(log.New(os.Stderr, "htevents ", log.LstdFlags))
 }

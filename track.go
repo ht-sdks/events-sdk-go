@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "time"
 
@@ -24,7 +24,7 @@ type Track struct {
 func (msg Track) Validate() error {
 	if len(msg.Event) == 0 {
 		return FieldError{
-			Type:  "analytics.Track",
+			Type:  "htevents.Track",
 			Name:  "Event",
 			Value: msg.Event,
 		}
@@ -32,7 +32,7 @@ func (msg Track) Validate() error {
 
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Track",
+			Type:  "htevents.Track",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}

@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import (
 	"reflect"
@@ -30,7 +30,7 @@ func TestValidateFieldsMissingType(t *testing.T) {
 		t.Error("invalid error type returned when validating a generic message:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Event",
+		Type:  "htevents.Event",
 		Name:  "Type",
 		Value: nil,
 	}) {
@@ -50,7 +50,7 @@ func TestValidateFieldsInvalidType(t *testing.T) {
 		t.Error("invalid error type returned when validating a generic message:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Event",
+		Type:  "htevents.Event",
 		Name:  "Type",
 		Value: "invalid",
 	}) {
@@ -80,7 +80,7 @@ func TestValidateFieldsAliasInvalid(t *testing.T) {
 	} else if e, ok := err.(FieldError); !ok {
 		t.Error("invalid error type returned when validating a generic message:", err)
 	} else if e != (FieldError{
-		Type:  "analytics.Alias",
+		Type:  "htevents.Alias",
 		Name:  "PreviousId",
 		Value: "",
 	}) {
@@ -122,7 +122,7 @@ func TestValidateFieldsGroupInvalid(t *testing.T) {
 		t.Error("invalid error type returned when validating a generic message:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Group",
+		Type:  "htevents.Group",
 		Name:  "GroupId",
 		Value: "",
 	}) {
@@ -161,7 +161,7 @@ func TestValidateFieldsIdentifyInvalid(t *testing.T) {
 		t.Error("invalid error type returned when validating a generic message:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Identify",
+		Type:  "htevents.Identify",
 		Name:  "UserId",
 		Value: "",
 	}) {
@@ -200,7 +200,7 @@ func TestValidateFieldsPageInvalid(t *testing.T) {
 		t.Error("invalid error type returned when validating a generic message:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Page",
+		Type:  "htevents.Page",
 		Name:  "UserId",
 		Value: "",
 	}) {
@@ -239,7 +239,7 @@ func TestValidateFieldsScreenInvalid(t *testing.T) {
 		t.Error("invalid error type returned when validating a generic message:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Screen",
+		Type:  "htevents.Screen",
 		Name:  "UserId",
 		Value: "",
 	}) {
@@ -281,7 +281,7 @@ func TestValidateFieldsTrackInvalid(t *testing.T) {
 		t.Error("invalid error type returned when validating a generic message:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Track",
+		Type:  "htevents.Track",
 		Name:  "Event",
 		Value: "",
 	}) {

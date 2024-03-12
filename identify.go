@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "time"
 
@@ -23,7 +23,7 @@ type Identify struct {
 func (msg Identify) Validate() error {
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Identify",
+			Type:  "htevents.Identify",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}

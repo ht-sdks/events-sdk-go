@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "time"
 
@@ -24,7 +24,7 @@ type Group struct {
 func (msg Group) Validate() error {
 	if len(msg.GroupId) == 0 {
 		return FieldError{
-			Type:  "analytics.Group",
+			Type:  "htevents.Group",
 			Name:  "GroupId",
 			Value: msg.GroupId,
 		}
@@ -32,7 +32,7 @@ func (msg Group) Validate() error {
 
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Group",
+			Type:  "htevents.Group",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}

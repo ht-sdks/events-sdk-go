@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "time"
 
@@ -22,7 +22,7 @@ type Alias struct {
 func (msg Alias) Validate() error {
 	if len(msg.UserId) == 0 {
 		return FieldError{
-			Type:  "analytics.Alias",
+			Type:  "htevents.Alias",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}
@@ -30,7 +30,7 @@ func (msg Alias) Validate() error {
 
 	if len(msg.PreviousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Alias",
+			Type:  "htevents.Alias",
 			Name:  "PreviousId",
 			Value: msg.PreviousId,
 		}

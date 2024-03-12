@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "testing"
 
@@ -12,7 +12,7 @@ func TestPageMissingUserId(t *testing.T) {
 		t.Error("invalid error type returned when validating page:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Page",
+		Type:  "htevents.Page",
 		Name:  "UserId",
 		Value: "",
 	}) {

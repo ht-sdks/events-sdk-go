@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "time"
 
@@ -24,7 +24,7 @@ type Screen struct {
 func (msg Screen) Validate() error {
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Screen",
+			Type:  "htevents.Screen",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}
