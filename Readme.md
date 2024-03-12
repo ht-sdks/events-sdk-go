@@ -35,7 +35,7 @@ import (
 func main() {
   // Instantiates client to send events to the Hightouch Events API.
   client, _ := htevents.NewWithConfig("WRITE_KEY", htevents.Config{
-    Endpoint: "us-east-1.hightouch-events.com"
+    Endpoint: "us-east-1.hightouch-events.com",
   })
 
   // Flushes any queued messages and closes the client.
