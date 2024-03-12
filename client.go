@@ -1,9 +1,8 @@
-package analytics
+package htevents
 
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"strconv"
 	"sync"
 
@@ -14,9 +13,9 @@ import (
 )
 
 // Version of the client.
-const Version = "3.0.0"
+const Version = "0.0.1"
 
-// This interface is the main API exposed by the analytics package.
+// This interface is the main API exposed by the htevents package.
 // Values that satsify this interface are returned by the client constructors
 // provided by the package and provide a way to send messages via the HTTP API.
 type Client interface {
@@ -27,9 +26,9 @@ type Client interface {
 	// This is the main method you'll be using, a typical flow would look like
 	// this:
 	//
-	//	client := analytics.New(writeKey)
+	//	client := htevents.New(writeKey)
 	//	...
-	//	client.Enqueue(analytics.Track{ ... })
+	//	client.Enqueue(htevents.Track{ ... })
 	//	...
 	//	client.Close()
 	//
@@ -289,7 +288,7 @@ func (c *client) upload(b []byte) error {
 		return err
 	}
 
-	req.Header.Add("User-Agent", "analytics-go (version: "+Version+")")
+	req.Header.Add("User-Agent", "events-sdk-go (version: "+Version+")")
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Content-Length", strconv.Itoa(len(b)))
 	req.SetBasicAuth(c.key, "")
@@ -314,7 +313,7 @@ func (c *client) report(res *http.Response) (err error) {
 		return
 	}
 
-	if body, err = ioutil.ReadAll(res.Body); err != nil {
+	if body, err = io.ReadAll(res.Body); err != nil {
 		c.errorf("response %d %s - %s", res.StatusCode, res.Status, err)
 		return
 	}

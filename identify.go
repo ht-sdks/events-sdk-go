@@ -1,11 +1,11 @@
-package analytics
+package htevents
 
 import "time"
 
 var _ Message = (*Identify)(nil)
 
 // This type represents object sent in an identify call as described in
-// https://segment.com/docs/libraries/http/#identify
+// https://hightouch.com/docs/events/event-spec#identify-events
 type Identify struct {
 	// This field is exported for serialization purposes and shouldn't be set by
 	// the application, its value is always overwritten by the library.
@@ -23,7 +23,7 @@ type Identify struct {
 func (msg Identify) Validate() error {
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Identify",
+			Type:  "htevents.Identify",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}

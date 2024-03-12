@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "time"
 
@@ -8,15 +8,15 @@ import "time"
 // common fields.
 // Here's a quick example of how this type is meant to be used:
 //
-//	analytics.Identify{
+//	htevents.Identify{
 //		UserId: "0123456789",
-//		Traits: analytics.NewTraits()
+//		Traits: htevents.NewTraits()
 //			.SetFirstName("Luke")
 //			.SetLastName("Skywalker")
 //			.Set("Role", "Jedi"),
 //	}
 //
-// The specifications can be found at https://segment.com/docs/spec/identify/#traits
+// The specifications can be found at https://hightouch.com/docs/events/event-spec
 type Traits map[string]interface{}
 
 func NewTraits() Traits {

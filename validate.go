@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 type FieldGetter interface {
 	GetField(field string) (interface{}, bool)
@@ -58,7 +58,7 @@ func ValidateFields(msg FieldGetter) error {
 		}
 	}
 	return FieldError{
-		Type:  "analytics.Event",
+		Type:  "htevents.Event",
 		Name:  "Type",
 		Value: typ,
 	}

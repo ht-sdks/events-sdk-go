@@ -1,31 +1,27 @@
-# analytics-go [![Circle CI](https://circleci.com/gh/segmentio/analytics-go/tree/v3.0.svg?style=shield)](https://circleci.com/gh/segmentio/analytics-go/tree/v3.0) [![go-doc](https://godoc.org/github.com/segmentio/analytics-go?status.svg)](https://godoc.org/github.com/segmentio/analytics-go)
+# events-sdk-go [![go-doc](https://godoc.org/github.com/ht-sdks/events-sdk-go?status.svg)](https://godoc.org/github.com/ht-sdks/events-sdk-go)
 
-Segment analytics client for Go.
-
-### ⚠️ Maintenance ⚠️
-This library is in maintenance mode. It will send data as intended, but receive no new feature support and only critical maintenance updates from Segment.
+Hightouch Events SDK for Go.
 
 ## Installation
 
-The package can be simply installed via go get, we recommend that you use a
+The package can be installed via `go get`, we recommend that you use a
 package version management system like the Go vendor directory or a tool like
 Godep to avoid issues related to API breaking changes introduced between major
 versions of the library.
 
 To install it in the GOPATH:
 ```
-go get https://github.com/segmentio/analytics-go
+go get github.com/ht-sdks/events-sdk-go
 ```
 
 ## Documentation
 
 The links bellow should provide all the documentation needed to make the best
-use of the library and the Segment API:
+use of the library and the Hightouch Events API:
 
-- [Documentation](https://segment.com/docs/libraries/go/)
-- [godoc](https://godoc.org/gopkg.in/segmentio/analytics-go.v3)
-- [API](https://segment.com/docs/libraries/http/)
-- [Specs](https://segment.com/docs/spec/)
+- [Documentation](https://hightouch.com/docs/events/sdks/go)
+- [API](https://hightouch.com/docs/events/sdks/http)
+- [Specs](https://hightouch.com/docs/events/event-spec)
 
 ## Usage
 
@@ -33,26 +29,31 @@ use of the library and the Segment API:
 package main
 
 import (
-    "os"
-
-    "github.com/segmentio/analytics-go"
+  "github.com/ht-sdks/events-sdk-go"
 )
 
 func main() {
-    // Instantiates a client to use send messages to the segment API.
-    client := analytics.New(os.Getenv("SEGMENT_WRITE_KEY"))
+  // Instantiates client to send events to the Hightouch Events API.
+  client, _ := htevents.NewWithConfig("WRITE_KEY", htevents.Config{
+    Endpoint: "us-east-1.hightouch-events.com",
+  })
 
-    // Enqueues a track event that will be sent asynchronously.
-    client.Enqueue(analytics.Track{
-        UserId: "test-user",
-        Event:  "test-snippet",
-    })
+  // Flushes any queued messages and closes the client.
+  defer client.Close()
 
-    // Flushes any queued messages and closes the client.
-    client.Close()
+  // Enqueues a track event that will be sent asynchronously.
+  client.Enqueue(htevents.Track{
+    Event:  "Created Account",
+    UserId: "123",
+    Properties: htevents.Properties{
+      "application": "Desktop",
+      "version":     "1.2.3",
+      "platform":    "osx",
+    },
+  })
 }
 ```
 
 ## License
 
-The library is released under the [MIT license](License.md).
+The library is released under the [MIT license](LICENSE).

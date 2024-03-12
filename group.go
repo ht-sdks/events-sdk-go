@@ -1,11 +1,11 @@
-package analytics
+package htevents
 
 import "time"
 
 var _ Message = (*Group)(nil)
 
 // This type represents object sent in a group call as described in
-// https://segment.com/docs/libraries/http/#group
+// https://hightouch.com/docs/events/event-spec#group-events
 type Group struct {
 	// This field is exported for serialization purposes and shouldn't be set by
 	// the application, its value is always overwritten by the library.
@@ -24,7 +24,7 @@ type Group struct {
 func (msg Group) Validate() error {
 	if len(msg.GroupId) == 0 {
 		return FieldError{
-			Type:  "analytics.Group",
+			Type:  "htevents.Group",
 			Name:  "GroupId",
 			Value: msg.GroupId,
 		}
@@ -32,7 +32,7 @@ func (msg Group) Validate() error {
 
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Group",
+			Type:  "htevents.Group",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}

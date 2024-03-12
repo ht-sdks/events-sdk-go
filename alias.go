@@ -1,11 +1,11 @@
-package analytics
+package htevents
 
 import "time"
 
 var _ Message = (*Alias)(nil)
 
 // This type represents object sent in a alias call as described in
-// https://segment.com/docs/libraries/http/#alias
+// https://hightouch.com/docs/events/event-spec#identify-events
 type Alias struct {
 	// This field is exported for serialization purposes and shouldn't be set by
 	// the application, its value is always overwritten by the library.
@@ -22,7 +22,7 @@ type Alias struct {
 func (msg Alias) Validate() error {
 	if len(msg.UserId) == 0 {
 		return FieldError{
-			Type:  "analytics.Alias",
+			Type:  "htevents.Alias",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}
@@ -30,7 +30,7 @@ func (msg Alias) Validate() error {
 
 	if len(msg.PreviousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Alias",
+			Type:  "htevents.Alias",
 			Name:  "PreviousId",
 			Value: msg.PreviousId,
 		}

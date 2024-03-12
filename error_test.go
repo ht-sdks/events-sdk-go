@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "testing"
 
@@ -9,7 +9,7 @@ func TestConfigError(t *testing.T) {
 		Value:  42,
 	}
 
-	if s := e.Error(); s != "analytics.NewWithConfig: testing (analytics.Config.Answer: 42)" {
+	if s := e.Error(); s != "htevents.NewWithConfig: testing (htevents.Config.Answer: 42)" {
 		t.Error("invalid error message returned by config error:", s)
 	}
 }

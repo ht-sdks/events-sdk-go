@@ -1,11 +1,11 @@
-package analytics
+package htevents
 
 import "time"
 
 var _ Message = (*Page)(nil)
 
 // This type represents object sent in a page call as described in
-// https://segment.com/docs/libraries/http/#page
+// https://hightouch.com/docs/events/event-spec#page-events
 type Page struct {
 	// This field is exported for serialization purposes and shouldn't be set by
 	// the application, its value is always overwritten by the library.
@@ -24,7 +24,7 @@ type Page struct {
 func (msg Page) Validate() error {
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Page",
+			Type:  "htevents.Page",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}

@@ -1,11 +1,11 @@
-package analytics
+package htevents
 
 import "time"
 
 var _ Message = (*Screen)(nil)
 
 // This type represents object sent in a screen call as described in
-// https://segment.com/docs/libraries/http/#screen
+// https://hightouch.com/docs/events/event-spec#screen-events
 type Screen struct {
 	// This field is exported for serialization purposes and shouldn't be set by
 	// the application, its value is always overwritten by the library.
@@ -24,7 +24,7 @@ type Screen struct {
 func (msg Screen) Validate() error {
 	if len(msg.UserId) == 0 && len(msg.AnonymousId) == 0 {
 		return FieldError{
-			Type:  "analytics.Screen",
+			Type:  "htevents.Screen",
 			Name:  "UserId",
 			Value: msg.UserId,
 		}

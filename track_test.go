@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "testing"
 
@@ -14,7 +14,7 @@ func TestTrackMissingEvent(t *testing.T) {
 		t.Error("invalid error type returned when validating track:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Track",
+		Type:  "htevents.Track",
 		Name:  "Event",
 		Value: "",
 	}) {
@@ -34,7 +34,7 @@ func TestTrackMissingUserId(t *testing.T) {
 		t.Error("invalid error type returned when validating track:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Track",
+		Type:  "htevents.Track",
 		Name:  "UserId",
 		Value: "",
 	}) {

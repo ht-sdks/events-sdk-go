@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import "testing"
 
@@ -12,7 +12,7 @@ func TestScreenMissingUserId(t *testing.T) {
 		t.Error("invalid error type returned when validating screen:", err)
 
 	} else if e != (FieldError{
-		Type:  "analytics.Screen",
+		Type:  "htevents.Screen",
 		Name:  "UserId",
 		Value: "",
 	}) {

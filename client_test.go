@@ -1,4 +1,4 @@
-package analytics
+package htevents
 
 import (
 	"bytes"
@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -86,7 +85,7 @@ var (
 			Proto:      r.Proto,
 			ProtoMajor: r.ProtoMajor,
 			ProtoMinor: r.ProtoMinor,
-			Body:       ioutil.NopCloser(strings.NewReader("")),
+			Body:       io.NopCloser(strings.NewReader("")),
 			Request:    r,
 		}, nil
 	})
@@ -105,7 +104,7 @@ var (
 			Proto:      r.Proto,
 			ProtoMajor: r.ProtoMajor,
 			ProtoMinor: r.ProtoMinor,
-			Body:       ioutil.NopCloser(strings.NewReader("")),
+			Body:       io.NopCloser(strings.NewReader("")),
 			Request:    r,
 		}, nil
 	})
@@ -118,7 +117,7 @@ var (
 			Proto:      r.Proto,
 			ProtoMajor: r.ProtoMajor,
 			ProtoMinor: r.ProtoMinor,
-			Body:       ioutil.NopCloser(readFunc(func(b []byte) (int, error) { return 0, testError })),
+			Body:       io.NopCloser(readFunc(func(b []byte) (int, error) { return 0, testError })),
 			Request:    r,
 		}, nil
 	})
@@ -135,7 +134,7 @@ func fixture(name string) string {
 		panic(err)
 	}
 	defer f.Close()
-	b, err := ioutil.ReadAll(f)
+	b, err := io.ReadAll(f)
 	if err != nil {
 		panic(err)
 	}
@@ -177,7 +176,7 @@ func ExampleTrack() {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		BatchSize: 1,
 		now:       mockTime,
@@ -189,7 +188,7 @@ func ExampleTrack() {
 		Event:  "Download",
 		UserId: "123456",
 		Properties: Properties{
-			"application": "Segment Desktop",
+			"application": "HT Desktop",
 			"version":     "1.1.0",
 			"platform":    "osx",
 		},
@@ -203,7 +202,7 @@ func ExampleTrack() {
 	//       "event": "Download",
 	//       "messageId": "I'm unique",
 	//       "properties": {
-	//         "application": "Segment Desktop",
+	//         "application": "HT Desktop",
 	//         "platform": "osx",
 	//         "version": "1.1.0"
 	//       },
@@ -214,8 +213,8 @@ func ExampleTrack() {
 	//   ],
 	//   "context": {
 	//     "library": {
-	//       "name": "analytics-go",
-	//       "version": "3.0.0"
+	//       "name": "events-sdk-go",
+	//       "version": "0.0.1"
 	//     }
 	//   },
 	//   "messageId": "I'm unique",
@@ -259,7 +258,7 @@ func TestEnqueue(t *testing.T) {
 				Event:  "Download",
 				UserId: "123456",
 				Properties: Properties{
-					"application": "Segment Desktop",
+					"application": "HT Desktop",
 					"version":     "1.1.0",
 					"platform":    "osx",
 				},
@@ -296,7 +295,7 @@ func TestEnqueue(t *testing.T) {
 				Event:  "Download",
 				UserId: "123456",
 				Properties: Properties{
-					"application": "Segment Desktop",
+					"application": "HT Desktop",
 					"version":     "1.1.0",
 					"platform":    "osx",
 				},
@@ -307,7 +306,7 @@ func TestEnqueue(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -342,7 +341,7 @@ func TestEnqueuingCustomTypeFails(t *testing.T) {
 	client := New("0123456789")
 	err := client.Enqueue(&customMessage{})
 
-	if err.Error() != "messages with custom types cannot be enqueued: *analytics.customMessage" {
+	if err.Error() != "messages with custom types cannot be enqueued: *htevents.customMessage" {
 		t.Errorf("invalid/missing error when queuing unsupported message: %v", err)
 	}
 }
@@ -356,7 +355,7 @@ func TestTrackWithInterval(t *testing.T) {
 
 	t0 := time.Now()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint: server.URL,
 		Interval: interval,
 		Verbose:  true,
@@ -370,7 +369,7 @@ func TestTrackWithInterval(t *testing.T) {
 		Event:  "Download",
 		UserId: "123456",
 		Properties: Properties{
-			"application": "Segment Desktop",
+			"application": "HT Desktop",
 			"version":     "1.1.0",
 			"platform":    "osx",
 		},
@@ -392,7 +391,7 @@ func TestTrackWithTimestamp(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -406,7 +405,7 @@ func TestTrackWithTimestamp(t *testing.T) {
 		Event:  "Download",
 		UserId: "123456",
 		Properties: Properties{
-			"application": "Segment Desktop",
+			"application": "HT Desktop",
 			"version":     "1.1.0",
 			"platform":    "osx",
 		},
@@ -424,7 +423,7 @@ func TestTrackWithMessageId(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -438,7 +437,7 @@ func TestTrackWithMessageId(t *testing.T) {
 		Event:  "Download",
 		UserId: "123456",
 		Properties: Properties{
-			"application": "Segment Desktop",
+			"application": "HT Desktop",
 			"version":     "1.1.0",
 			"platform":    "osx",
 		},
@@ -456,7 +455,7 @@ func TestTrackWithContext(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -470,7 +469,7 @@ func TestTrackWithContext(t *testing.T) {
 		Event:  "Download",
 		UserId: "123456",
 		Properties: Properties{
-			"application": "Segment Desktop",
+			"application": "HT Desktop",
 			"version":     "1.1.0",
 			"platform":    "osx",
 		},
@@ -492,7 +491,7 @@ func TestTrackMany(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -507,7 +506,7 @@ func TestTrackMany(t *testing.T) {
 			Event:  "Download",
 			UserId: "123456",
 			Properties: Properties{
-				"application": "Segment Desktop",
+				"application": "HT Desktop",
 				"version":     i,
 			},
 		})
@@ -524,7 +523,7 @@ func TestTrackWithIntegrations(t *testing.T) {
 	body, server := mockServer()
 	defer server.Close()
 
-	client, _ := NewWithConfig("h97jamjwbh", Config{
+	client, _ := NewWithConfig("<write_key>", Config{
 		Endpoint:  server.URL,
 		Verbose:   true,
 		Logger:    t,
@@ -538,7 +537,7 @@ func TestTrackWithIntegrations(t *testing.T) {
 		Event:  "Download",
 		UserId: "123456",
 		Properties: Properties{
-			"application": "Segment Desktop",
+			"application": "HT Desktop",
 			"version":     "1.1.0",
 			"platform":    "osx",
 		},
