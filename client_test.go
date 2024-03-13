@@ -214,7 +214,7 @@ func ExampleTrack() {
 	//   "context": {
 	//     "library": {
 	//       "name": "events-sdk-go",
-	//       "version": "0.0.1"
+	//       "version": "0.0.2"
 	//     }
 	//   },
 	//   "messageId": "I'm unique",

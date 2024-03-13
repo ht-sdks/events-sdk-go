@@ -13,7 +13,7 @@ import (
 )
 
 // Version of the client.
-const Version = "0.0.1"
+const Version = "0.0.2"
 
 // This interface is the main API exposed by the htevents package.
 // Values that satsify this interface are returned by the client constructors
