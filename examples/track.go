@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"time"
 
-	htevents "github.com/ht-sdks/events-sdk-go"
+	"github.com/ht-sdks/events-sdk-go"
 )
 
 func main() {
-	client, _ := htevents.NewWithConfig("<write_key>", htevents.Config{
+	client, _ := htevents.NewWithConfig("WRITE_KEY", htevents.Config{
+		Endpoint:  "https://us-east-1.hightouch-events.com",
 		Interval:  30 * time.Second,
 		BatchSize: 100,
 		Verbose:   true,
