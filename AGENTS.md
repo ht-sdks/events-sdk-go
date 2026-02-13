@@ -132,7 +132,7 @@ make ci
 # Which executes: go get -v -t ./... && go vet ./... && go test -race ./...
 ```
 
-If a dependency upgrade requires a newer minimum Go version, update the `go` directive in `go.mod` and update the CI matrix in `.github/workflows/ci.yml` accordingly.
+If a dependency upgrade requires a newer minimum Go version, update the `go` directive in `go.mod`, update the CI matrix in `.github/workflows/ci.yml`, and update the supported versions listed in this `AGENTS.md` file accordingly.
 
 ---
 
