@@ -8,7 +8,7 @@ This file provides instructions for AI agents working on this Go SDK repository.
 - **Minimum Go Version**: 1.17 (see `go.mod`)
 - **Module**: `github.com/ht-sdks/events-sdk-go`
 - **Package Name**: `htevents`
-- **CI**: GitHub Actions (`.github/workflows/ci.yml`), tested on Go 1.17, 1.19, and 1.22
+- **CI**: GitHub Actions (`.github/workflows/ci.yml`), tested on Go 1.17, 1.19, 1.22, 1.26, and 1.27
 
 ---
 
@@ -124,7 +124,7 @@ Compare test results to the baseline from step 2. Fix any failures before procee
 
 ### 7. Verify CI Would Pass
 
-The CI matrix tests on Go 1.17, 1.19, and 1.22. If you have multiple Go versions available, test across them:
+The CI matrix tests on Go 1.17, 1.19, 1.22, 1.26, and 1.27. If you have multiple Go versions available, test across them:
 
 ```bash
 # The CI effectively runs:
