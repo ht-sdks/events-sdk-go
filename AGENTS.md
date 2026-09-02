@@ -5,10 +5,10 @@ This file provides instructions for AI agents working on this Go SDK repository.
 ## Project Overview
 
 - **Language**: Go
-- **Minimum Go Version**: 1.17 (see `go.mod`)
+- **Minimum Go Version**: 1.21 (see `go.mod`)
 - **Module**: `github.com/ht-sdks/events-sdk-go`
 - **Package Name**: `htevents`
-- **CI**: GitHub Actions (`.github/workflows/ci.yml`), tested on Go 1.17, 1.19, and 1.22
+- **CI**: GitHub Actions (`.github/workflows/ci.yml`), tested on Go 1.21, 1.22, and 1.26
 
 ---
 
@@ -124,7 +124,7 @@ Compare test results to the baseline from step 2. Fix any failures before procee
 
 ### 7. Verify CI Would Pass
 
-The CI matrix tests on Go 1.17, 1.19, and 1.22. If you have multiple Go versions available, test across them:
+The CI matrix tests on Go 1.21, 1.22, and 1.26. If you have multiple Go versions available, test across them:
 
 ```bash
 # The CI effectively runs:
@@ -140,9 +140,9 @@ If a dependency upgrade requires a newer minimum Go version, update the `go` dir
 
 ### Go Version Compatibility
 
-This module targets Go 1.17 as the minimum version (see `go.mod`). When upgrading dependencies:
+This module targets Go 1.21 as the minimum version (see `go.mod`). When upgrading dependencies:
 
-- Verify the dependency still supports Go 1.17
+- Verify the dependency still supports Go 1.21
 - If it doesn't, either pin an older version or bump the minimum Go version in `go.mod` and update the CI matrix
 
 ### CI Failures After Dependency Updates
