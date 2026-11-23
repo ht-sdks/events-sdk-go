@@ -45,7 +45,8 @@ type client struct {
 	// This channel is where the `Enqueue` method writes messages so they can be
 	// picked up and pushed by the backend goroutine taking care of applying the
 	// batching rules.
-	msgs chan Message
+	msgs      chan Message
+	admission sync.RWMutex
 
 	// These two channels are used to synchronize the client shutting down when
 	// `Close` is called.
@@ -192,18 +193,19 @@ func (c *client) Enqueue(msg Message) (err error) {
 		return
 	}
 
-	defer func() {
-		// When the `msgs` channel is closed writing to it will trigger a panic.
-		// To avoid letting the panic propagate to the caller we recover from it
-		// and instead report that the client has been closed and shouldn't be
-		// used anymore.
-		if recover() != nil {
-			err = ErrClosed
-		}
-	}()
-
-	c.msgs <- msg
-	return
+	c.admission.RLock()
+	defer c.admission.RUnlock()
+	select {
+	case <-c.quit:
+		return ErrClosed
+	default:
+	}
+	select {
+	case c.msgs <- msg:
+		return nil
+	case <-c.quit:
+		return ErrClosed
+	}
 }
 
 // Close and flush metrics.
@@ -220,76 +222,33 @@ func (c *client) Close() (err error) {
 	return
 }
 
-// Asychronously send a batched requests.
-func (c *client) sendAsync(msgs []message, wg *sync.WaitGroup, ex *executor) {
-	wg.Add(1)
-
-	if !ex.do(func() {
-		defer wg.Done()
-		defer func() {
-			// In case a bug is introduced in the send function that triggers
-			// a panic, we don't want this to ever crash the application so we
-			// catch it here and log it instead.
-			if err := recover(); err != nil {
-				c.errorf("panic - %s", err)
-			}
-		}()
-		c.send(msgs)
-	}) {
-		wg.Done()
-		c.errorf("sending messages failed - %s", ErrTooManyRequests)
-		c.notifyFailure(msgs, ErrTooManyRequests)
-	}
+type pendingUpload struct {
+	messages []message
+	body     []byte
+	err      error
+	attempt  int
 }
 
-// Send batch request.
-func (c *client) send(msgs []message) {
-	const attempts = 10
-
-	b, err := json.Marshal(batch{
-		MessageId: c.uid(),
-		SentAt:    c.now(),
-		Messages:  msgs,
-		Context:   c.DefaultContext,
+func (c *client) prepare(msgs []message) *pendingUpload {
+	body, err := json.Marshal(batch{
+		MessageId: c.uid(), SentAt: c.now(), Messages: msgs, Context: c.DefaultContext,
 	})
-
 	if err != nil {
-		c.errorf("marshalling messages - %s", err)
 		c.notifyFailure(msgs, err)
-		return
+		return nil
 	}
+	return &pendingUpload{messages: msgs, body: body}
+}
 
-	for failures, delayIndex := 0, 0; failures < attempts; {
-		if err = c.upload(b); err == nil {
-			c.notifySuccess(msgs)
-			return
-		}
+func sourceRejected(err error) bool {
+	status, ok := err.(uploadStatusError)
+	return ok && (status.code == 401 || status.code == 403 || status.code == 404)
+}
 
-		delay := c.RetryAfter(delayIndex)
-		if status, ok := err.(uploadStatusError); ok && (status.code == 401 || status.code == 403 || status.code == 404) {
-			c.errorf("collector returned HTTP %d; check the write key and endpoint. Retrying the batch", status.code)
-			if delay > time.Minute {
-				delay = time.Minute
-			}
-		} else {
-			failures++
-		}
-		if delayIndex < attempts-1 {
-			delayIndex++
-		}
-
-		// Wait for either a retry timeout or the client to be closed.
-		select {
-		case <-time.After(delay):
-		case <-c.quit:
-			c.errorf("%d messages dropped because they failed to be sent and the client was closed", len(msgs))
-			c.notifyFailure(msgs, err)
-			return
-		}
-	}
-
-	c.errorf("%d messages dropped because they failed to be sent after %d attempts", len(msgs), attempts)
-	c.notifyFailure(msgs, err)
+func recoverable(err error) bool {
+	status, ok := err.(uploadStatusError)
+	return !ok || sourceRejected(err) || status.code == 408 || status.code == 429 ||
+		(status.code >= 500 && status.code < 600)
 }
 
 // Upload serialized batch message.
@@ -346,67 +305,153 @@ func (c *client) report(res *http.Response) (err error) {
 func (c *client) loop() {
 	defer close(c.shutdown)
 
-	wg := &sync.WaitGroup{}
-	defer wg.Wait()
-
 	tick := time.NewTicker(c.Interval)
 	defer tick.Stop()
+	mq := messageQueue{maxBatchSize: c.BatchSize, maxBatchBytes: c.maxBatchBytes()}
 
-	ex := newExecutor(c.maxConcurrentRequests)
-	defer ex.close()
+	// The loop owns admission, backoff timers and the deferred batches. A worker
+	// exists only for the duration of an HTTP request.
+	completed := make(chan *pendingUpload, c.maxConcurrentRequests)
+	var pending []*pendingUpload
+	var probe *pendingUpload
+	var retry <-chan time.Time
+	active := 0
+	closing := false
+	draining := false
+	var closeError error
 
-	mq := messageQueue{
-		maxBatchSize:  c.BatchSize,
-		maxBatchBytes: c.maxBatchBytes(),
+	upload := func(batch *pendingUpload) {
+		active++
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					batch.err = fmt.Errorf("upload panic: %v", r)
+				}
+				completed <- batch
+			}()
+			batch.err = c.upload(batch.body)
+		}()
 	}
-
-	for {
-		select {
-		case msg := <-c.msgs:
-			c.push(&mq, msg, wg, ex)
-
-		case <-tick.C:
-			c.flush(&mq, wg, ex)
-
-		case <-c.quit:
-			c.debugf("exit requested – draining messages")
-
-			// Drain the msg channel, we have to close it first so no more
-			// messages can be pushed and otherwise the loop would never end.
-			close(c.msgs)
-			for msg := range c.msgs {
-				c.push(&mq, msg, wg, ex)
-			}
-
-			c.flush(&mq, wg, ex)
-			c.debugf("exit")
+	submit := func(msgs []message) {
+		if len(msgs) == 0 {
 			return
 		}
+		batch := c.prepare(msgs)
+		if batch == nil {
+			return
+		}
+		if closeError != nil {
+			c.notifyFailure(msgs, closeError)
+		} else if len(pending) != 0 {
+			pending = append(pending, batch)
+		} else if active < c.maxConcurrentRequests {
+			upload(batch)
+		} else {
+			c.notifyFailure(msgs, ErrTooManyRequests)
+		}
 	}
-}
-
-func (c *client) push(q *messageQueue, m Message, wg *sync.WaitGroup, ex *executor) {
-	var msg message
-	var err error
-
-	if msg, err = makeMessage(m, maxMessageBytes); err != nil {
-		c.errorf("%s - %v", err, m)
-		c.notifyFailure([]message{{m, nil}}, err)
-		return
+	push := func(m Message) {
+		msg, err := makeMessage(m, maxMessageBytes)
+		if err != nil {
+			c.notifyFailure([]message{{m, nil}}, err)
+			return
+		}
+		submit(mq.push(msg))
 	}
-
-	c.debugf("buffer (%d/%d) %v", len(q.pending), c.BatchSize, m)
-
-	if msgs := q.push(msg); msgs != nil {
-		c.debugf("exceeded messages batch limit with batch of %d messages – flushing", len(msgs))
-		c.sendAsync(msgs, wg, ex)
-	}
-}
-
-func (c *client) flush(q *messageQueue, wg *sync.WaitGroup, ex *executor) {
-	if msgs := q.flush(); msgs != nil {
-		c.debugf("flushing %d messages", len(msgs))
-		c.sendAsync(msgs, wg, ex)
+	quit := c.quit
+	for {
+		incoming := c.msgs
+		if closing || len(pending) >= c.maxConcurrentRequests || (draining && active >= c.maxConcurrentRequests) {
+			// Leave new events in the bounded input channel while the source is held.
+			incoming = nil
+		}
+		if closing && active == 0 {
+			return
+		}
+		select {
+		case m := <-incoming:
+			push(m)
+		case <-tick.C:
+			submit(mq.flush())
+		case <-retry:
+			retry = nil
+			probe = pending[0]
+			upload(probe)
+		case result := <-completed:
+			active--
+			terminal := result.err == nil || closing || (!recoverable(result.err) && result.attempt >= 9)
+			wasProbe := result == probe
+			if wasProbe {
+				probe = nil
+			}
+			if result.err == nil {
+				c.notifySuccess(result.messages)
+			} else if terminal {
+				c.notifyFailure(result.messages, result.err)
+			} else {
+				draining = true
+				result.attempt++
+				if sourceRejected(result.err) {
+					c.errorf("HTTP %v; check the write key and endpoint", result.err)
+				}
+				if !wasProbe {
+					pending = append(pending, result)
+				}
+			}
+			if wasProbe && terminal {
+				pending[0] = nil
+				pending = pending[1:]
+			}
+			if len(pending) == 0 && len(c.msgs) == 0 {
+				draining = false
+			}
+			if !closing && probe == nil && retry == nil && len(pending) != 0 {
+				first := pending[0]
+				index := first.attempt - 1
+				if index < 0 {
+					index = 0
+				}
+				if index > 9 {
+					index = 9
+				}
+				delay := c.RetryAfter(index)
+				if delay > time.Minute {
+					delay = time.Minute
+				}
+				if first.attempt >= 10 && !sourceRejected(first.err) && delay < time.Second {
+					delay = time.Second
+				}
+				if wasProbe && result.err == nil {
+					delay = 0
+				}
+				retry = time.After(delay)
+			}
+		case <-quit:
+			quit = nil
+			closing = true
+			if len(pending) > 0 {
+				closeError = ErrClosed
+			}
+			if probe != nil {
+				pending = pending[1:]
+			}
+			for _, batch := range pending {
+				err := batch.err
+				if err == nil {
+					err = ErrClosed
+				}
+				c.notifyFailure(batch.messages, err)
+			}
+			pending = nil
+			probe = nil
+			retry = nil
+			c.admission.Lock()
+			c.admission.Unlock() // All concurrent enqueues have observed quit or finished sending.
+			for len(c.msgs) > 0 {
+				push(<-c.msgs)
+			}
+			submit(mq.flush())
+		}
 	}
 }
 
@@ -433,7 +478,14 @@ func (c *client) maxBatchBytes() int {
 	return maxBatchBytes - len(b)
 }
 
+func (c *client) recoverCallback() {
+	if r := recover(); r != nil {
+		c.errorf("panic in delivery callback: %v", r)
+	}
+}
+
 func (c *client) notifySuccess(msgs []message) {
+	defer c.recoverCallback()
 	if c.Callback != nil {
 		for _, m := range msgs {
 			c.Callback.Success(m.msg)
@@ -442,6 +494,7 @@ func (c *client) notifySuccess(msgs []message) {
 }
 
 func (c *client) notifyFailure(msgs []message, err error) {
+	defer c.recoverCallback()
 	if c.Callback != nil {
 		for _, m := range msgs {
 			c.Callback.Failure(m.msg, err)

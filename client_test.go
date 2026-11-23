@@ -746,12 +746,12 @@ func TestClientRetryError(t *testing.T) {
 
 	client.Enqueue(Track{UserId: "A", Event: "B"})
 
-	// Each retry should happen ~1 millisecond, this should give enough time to
-	// the test to trigger the failure callback.
+	// Allow the fast retries to exhaust before closing the deferred batch.
 	time.Sleep(50 * time.Millisecond)
+	client.Close()
 
 	if err := <-errchan; err == nil {
-		t.Error("failure callback not triggered for a retry falure")
+		t.Error("failure callback not triggered when closing a deferred upload")
 
 	} else if e, ok := err.(*url.Error); !ok {
 		t.Errorf("invalid error returned by round tripper: %T: %s", err, err)
@@ -797,6 +797,55 @@ func TestClientRetainsRejectedSourcePastRetryLimit(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("batch did not recover")
+	}
+}
+
+func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
+	done := make(chan error, 3)
+	deferred := make(chan struct{})
+	attempts := 0
+	c, err := NewWithConfig("original", Config{
+		BatchSize: 1, maxConcurrentRequests: 1,
+		RetryAfter: func(int) time.Duration { return time.Millisecond },
+		Callback:   testCallback{func(Message) { done <- nil }, func(_ Message, err error) { done <- err }},
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			attempts++
+			status := http.StatusServiceUnavailable
+			if attempts == 10 {
+				close(deferred)
+			}
+			if attempts > 10 {
+				status = http.StatusOK
+			}
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	send := func(id string) {
+		if err := c.Enqueue(Track{UserId: "user", Event: "track", MessageId: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("first")
+	select {
+	case <-deferred:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fast retries never exhausted")
+	}
+	send("second")
+	send("third")
+	for i := 0; i < 3; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(4 * time.Second):
+			t.Fatal("pending events did not recover")
+		}
 	}
 }
 
