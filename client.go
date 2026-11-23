@@ -259,15 +259,28 @@ func (c *client) send(msgs []message) {
 		return
 	}
 
-	for i := 0; i != attempts; i++ {
+	for failures, delayIndex := 0, 0; failures < attempts; {
 		if err = c.upload(b); err == nil {
 			c.notifySuccess(msgs)
 			return
 		}
 
+		delay := c.RetryAfter(delayIndex)
+		if status, ok := err.(uploadStatusError); ok && (status.code == 401 || status.code == 403 || status.code == 404) {
+			c.errorf("collector returned HTTP %d; check the write key and endpoint. Retrying the batch", status.code)
+			if delay > time.Minute {
+				delay = time.Minute
+			}
+		} else {
+			failures++
+		}
+		if delayIndex < attempts-1 {
+			delayIndex++
+		}
+
 		// Wait for either a retry timeout or the client to be closed.
 		select {
-		case <-time.After(c.RetryAfter(i)):
+		case <-time.After(delay):
 		case <-c.quit:
 			c.errorf("%d messages dropped because they failed to be sent and the client was closed", len(msgs))
 			c.notifyFailure(msgs, err)
@@ -304,6 +317,13 @@ func (c *client) upload(b []byte) error {
 	return c.report(res)
 }
 
+type uploadStatusError struct {
+	code   int
+	status string
+}
+
+func (e uploadStatusError) Error() string { return fmt.Sprintf("%d %s", e.code, e.status) }
+
 // Report on response body.
 func (c *client) report(res *http.Response) (err error) {
 	var body []byte
@@ -319,7 +339,7 @@ func (c *client) report(res *http.Response) (err error) {
 	}
 
 	c.logf("response %d %s – %s", res.StatusCode, res.Status, string(body))
-	return fmt.Errorf("%d %s", res.StatusCode, res.Status)
+	return uploadStatusError{res.StatusCode, res.Status}
 }
 
 // Batch loop.

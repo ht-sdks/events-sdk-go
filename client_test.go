@@ -763,6 +763,43 @@ func TestClientRetryError(t *testing.T) {
 	client.Close()
 }
 
+func TestClientRetainsRejectedSourcePastRetryLimit(t *testing.T) {
+	done := make(chan error, 1)
+	requests := 0
+	c, err := NewWithConfig("source", Config{
+		BatchSize:  1,
+		RetryAfter: func(int) time.Duration { return time.Millisecond },
+		Callback:   testCallback{func(Message) { done <- nil }, func(_ Message, err error) { done <- err }},
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			key, _, _ := r.BasicAuth()
+			if key != "source" {
+				t.Errorf("unexpected source %q", key)
+			}
+			requests++
+			status := http.StatusUnauthorized
+			if requests == 12 {
+				status = http.StatusOK
+			}
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Enqueue(Track{UserId: "a", Event: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch did not recover")
+	}
+}
+
 func TestClientResponse400(t *testing.T) {
 	errchan := make(chan error, 1)
 
