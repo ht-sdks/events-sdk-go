@@ -231,7 +231,10 @@ type pendingUpload struct {
 
 func (c *client) prepare(msgs []message) *pendingUpload {
 	body, err := json.Marshal(batch{
-		MessageId: c.uid(), SentAt: c.now(), Messages: msgs, Context: c.DefaultContext,
+		MessageId: c.uid(),
+		SentAt:    c.now(),
+		Messages:  msgs,
+		Context:   c.DefaultContext,
 	})
 	if err != nil {
 		c.notifyFailure(msgs, err)
@@ -244,6 +247,14 @@ func recoverable(err error) bool {
 	status, ok := err.(uploadStatusError)
 	return !ok || status.code == 408 || status.code == 429 ||
 		(status.code >= 500 && status.code < 600)
+}
+
+// Once fast retries are exhausted, reuse the last configured interval.
+func (c *client) retryInterval(attempt int) time.Duration {
+	if attempt > 9 {
+		attempt = 9
+	}
+	return c.RetryAfter(attempt)
 }
 
 // Upload serialized batch message.
@@ -302,7 +313,10 @@ func (c *client) loop() {
 
 	tick := time.NewTicker(c.Interval)
 	defer tick.Stop()
-	mq := messageQueue{maxBatchSize: c.BatchSize, maxBatchBytes: c.maxBatchBytes()}
+	mq := messageQueue{
+		maxBatchSize:  c.BatchSize,
+		maxBatchBytes: c.maxBatchBytes(),
+	}
 
 	// The loop owns admission, backoff timers and the deferred batches. Deferred transient retries
 	// wait outside the upload workers.
@@ -311,7 +325,7 @@ func (c *client) loop() {
 	var probe *pendingUpload
 	var retry <-chan time.Time
 	active := 0
-	closing := false
+	quit := c.quit
 	draining := false
 	var closeError error
 
@@ -329,14 +343,10 @@ func (c *client) loop() {
 				if batch.err == nil || recoverable(batch.err) {
 					return
 				}
-				index := batch.attempt
-				if index > 9 {
-					index = 9
-				}
 				select {
 				case <-c.quit:
 					return
-				case <-time.After(c.RetryAfter(index)):
+				case <-time.After(c.retryInterval(batch.attempt)):
 				}
 				if batch.attempt >= 9 {
 					return
@@ -371,8 +381,8 @@ func (c *client) loop() {
 		}
 		submit(mq.push(msg))
 	}
-	quit := c.quit
 	for {
+		closing := quit == nil
 		incoming := c.msgs
 		if closing || len(pending) >= c.maxConcurrentRequests || (draining && active >= c.maxConcurrentRequests) {
 			// Leave new events in the bounded input channel while the source is held.
@@ -421,10 +431,7 @@ func (c *client) loop() {
 				if index < 0 {
 					index = 0
 				}
-				if index > 9 {
-					index = 9
-				}
-				delay := c.RetryAfter(index)
+				delay := c.retryInterval(index)
 				if delay > time.Minute {
 					delay = time.Minute
 				}
@@ -438,7 +445,6 @@ func (c *client) loop() {
 			}
 		case <-quit:
 			quit = nil
-			closing = true
 			if len(pending) > 0 {
 				closeError = ErrClosed
 			}
