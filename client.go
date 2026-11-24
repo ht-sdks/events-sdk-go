@@ -240,14 +240,9 @@ func (c *client) prepare(msgs []message) *pendingUpload {
 	return &pendingUpload{messages: msgs, body: body}
 }
 
-func sourceRejected(err error) bool {
-	status, ok := err.(uploadStatusError)
-	return ok && (status.code == 401 || status.code == 403 || status.code == 404)
-}
-
 func recoverable(err error) bool {
 	status, ok := err.(uploadStatusError)
-	return !ok || sourceRejected(err) || status.code == 408 || status.code == 429 ||
+	return !ok || status.code == 408 || status.code == 429 ||
 		(status.code >= 500 && status.code < 600)
 }
 
@@ -309,8 +304,8 @@ func (c *client) loop() {
 	defer tick.Stop()
 	mq := messageQueue{maxBatchSize: c.BatchSize, maxBatchBytes: c.maxBatchBytes()}
 
-	// The loop owns admission, backoff timers and the deferred batches. A worker
-	// exists only for the duration of an HTTP request.
+	// The loop owns admission, backoff timers and the deferred batches. Deferred transient retries
+	// wait outside the upload workers.
 	completed := make(chan *pendingUpload, c.maxConcurrentRequests)
 	var pending []*pendingUpload
 	var probe *pendingUpload
@@ -329,7 +324,25 @@ func (c *client) loop() {
 				}
 				completed <- batch
 			}()
-			batch.err = c.upload(batch.body)
+			for {
+				batch.err = c.upload(batch.body)
+				if batch.err == nil || recoverable(batch.err) {
+					return
+				}
+				index := batch.attempt
+				if index > 9 {
+					index = 9
+				}
+				select {
+				case <-c.quit:
+					return
+				case <-time.After(c.RetryAfter(index)):
+				}
+				if batch.attempt >= 9 {
+					return
+				}
+				batch.attempt++
+			}
 		}()
 	}
 	submit := func(msgs []message) {
@@ -379,7 +392,7 @@ func (c *client) loop() {
 			upload(probe)
 		case result := <-completed:
 			active--
-			terminal := result.err == nil || closing || (!recoverable(result.err) && result.attempt >= 9)
+			terminal := result.err == nil || closing || !recoverable(result.err)
 			wasProbe := result == probe
 			if wasProbe {
 				probe = nil
@@ -391,9 +404,6 @@ func (c *client) loop() {
 			} else {
 				draining = true
 				result.attempt++
-				if sourceRejected(result.err) {
-					c.errorf("HTTP %v; check the write key and endpoint", result.err)
-				}
 				if !wasProbe {
 					pending = append(pending, result)
 				}
@@ -418,7 +428,7 @@ func (c *client) loop() {
 				if delay > time.Minute {
 					delay = time.Minute
 				}
-				if first.attempt >= 10 && !sourceRejected(first.err) && delay < time.Second {
+				if first.attempt >= 10 && delay < time.Second {
 					delay = time.Second
 				}
 				if wasProbe && result.err == nil {
