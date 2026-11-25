@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -298,6 +299,9 @@ func (c *client) send(batch *pendingUpload, pause <-chan struct{}, completed cha
 }
 
 func recoverable(err error) bool {
+	if parseErr, ok := err.(*url.Error); ok && parseErr.Op == "parse" {
+		return false
+	}
 	status, ok := err.(uploadStatusError)
 	return !ok || status.code == 408 || status.code == 429 ||
 		(status.code >= 500 && status.code < 600)

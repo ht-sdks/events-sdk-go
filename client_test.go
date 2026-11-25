@@ -684,9 +684,12 @@ func TestClientMarshalContextError(t *testing.T) {
 func TestClientNewRequestError(t *testing.T) {
 	errchan := make(chan error, 1)
 
-	client, _ := NewWithConfig("0123456789", Config{
-		Endpoint: "://localhost:80", // Malformed endpoint URL.
-		Logger:   testLogger{t.Logf, t.Logf},
+	attempts := 0
+	client := newRecoveryClient(t, "0123456789", Config{
+		Endpoint:   "://localhost:80", // Malformed endpoint URL.
+		BatchSize:  1,
+		RetryAfter: func(int) time.Duration { attempts++; return 0 },
+		Logger:     testLogger{t.Logf, t.Logf},
 		Callback: testCallback{
 			nil,
 			func(m Message, e error) { errchan <- e },
@@ -695,10 +698,13 @@ func TestClientNewRequestError(t *testing.T) {
 	})
 
 	client.Enqueue(Track{UserId: "A", Event: "B"})
-	client.Close()
-
-	if err := <-errchan; err == nil {
-		t.Error("failure callback not triggered for an invalid request")
+	select {
+	case err := <-errchan:
+		if err == nil || attempts != fastAttempts {
+			t.Fatalf("attempts=%d, error=%v", attempts, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("malformed endpoint entered deferred recovery")
 	}
 }
 
