@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 
 	"bytes"
@@ -299,8 +300,9 @@ func (c *client) send(batch *pendingUpload, pause <-chan struct{}, completed cha
 }
 
 func recoverable(err error) bool {
-	if parseErr, ok := err.(*url.Error); ok && parseErr.Op == "parse" {
-		return false
+	if requestErr, ok := err.(*url.Error); ok {
+		// net/http reports unsupported schemes only after trying registered transports.
+		return requestErr.Op != "parse" && !strings.HasPrefix(requestErr.Err.Error(), "unsupported protocol scheme ")
 	}
 	status, ok := err.(uploadStatusError)
 	return !ok || status.code == 408 || status.code == 429 ||
