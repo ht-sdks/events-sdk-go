@@ -763,10 +763,27 @@ func TestClientRetryError(t *testing.T) {
 	client.Close()
 }
 
+func newRecoveryClient(t *testing.T, key string, config Config) Client {
+	t.Helper()
+	c, err := NewWithConfig(key, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+func enqueueRecoveryTrack(t *testing.T, c Client, track Track) {
+	t.Helper()
+	if err := c.Enqueue(track); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnauthorizedExhaustsOriginalAttempts(t *testing.T) {
 	done := make(chan error, 1)
 	requests := 0
-	c, err := NewWithConfig("original", Config{
+	c := newRecoveryClient(t, "original", Config{
 		BatchSize: 1, RetryAfter: func(int) time.Duration { return 0 },
 		Callback: testCallback{nil, func(_ Message, err error) { done <- err }},
 		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
@@ -774,13 +791,7 @@ func TestUnauthorizedExhaustsOriginalAttempts(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(""))}, nil
 		}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	if err := c.Enqueue(Track{UserId: "user", Event: "track"}); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "track"})
 	select {
 	case err := <-done:
 		if err == nil || requests != 10 {
@@ -791,22 +802,27 @@ func TestUnauthorizedExhaustsOriginalAttempts(t *testing.T) {
 	}
 }
 
+// Signal when the tenth failure schedules deferred delivery, before enqueuing fresh work.
+func signalDeferredRetry(deferred chan<- struct{}, delay time.Duration) func(int) time.Duration {
+	return func(attempt int) time.Duration {
+		if attempt == 9 {
+			select {
+			case deferred <- struct{}{}:
+			default:
+			}
+		}
+		return delay
+	}
+}
+
 func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 	done := make(chan error, 3)
 	deferred := make(chan struct{}, 1)
 	attempts := 0
-	c, err := NewWithConfig("original", Config{
+	c := newRecoveryClient(t, "original", Config{
 		BatchSize: 1, maxConcurrentRequests: 1,
-		RetryAfter: func(attempt int) time.Duration {
-			if attempt == 9 {
-				select {
-				case deferred <- struct{}{}:
-				default:
-				}
-			}
-			return time.Millisecond
-		},
-		Callback: testCallback{func(Message) { done <- nil }, func(_ Message, err error) { done <- err }},
+		RetryAfter: signalDeferredRetry(deferred, time.Millisecond),
+		Callback:   testCallback{func(Message) { done <- nil }, func(_ Message, err error) { done <- err }},
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			attempts++
 			status := http.StatusServiceUnavailable
@@ -816,14 +832,8 @@ func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
 		}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
 	send := func(id string) {
-		if err := c.Enqueue(Track{UserId: "user", Event: "track", MessageId: id}); err != nil {
-			t.Fatal(err)
-		}
+		enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "track", MessageId: id})
 	}
 	send("first")
 	select {
@@ -848,7 +858,7 @@ func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 func TestOrdinaryTransientRetryLeavesOtherUploadSlotsAvailable(t *testing.T) {
 	waiting := make(chan struct{}, 1)
 	delivered := make(chan Message, 2)
-	c, err := NewWithConfig("key", Config{
+	c := newRecoveryClient(t, "key", Config{
 		BatchSize: 1, maxConcurrentRequests: 2,
 		RetryAfter: func(int) time.Duration { waiting <- struct{}{}; return 2 * time.Minute },
 		Callback:   testCallback{func(m Message) { delivered <- m }, nil},
@@ -864,21 +874,13 @@ func TestOrdinaryTransientRetryLeavesOtherUploadSlotsAvailable(t *testing.T) {
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
 		}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	if err := c.Enqueue(Track{UserId: "user", Event: "A"}); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "A"})
 	select {
 	case <-waiting:
 	case <-time.After(time.Second):
 		t.Fatal("A did not enter ordinary backoff")
 	}
-	if err := c.Enqueue(Track{UserId: "user", Event: "B"}); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "B"})
 	select {
 	case m := <-delivered:
 		if m.(Track).Event != "B" {
@@ -897,17 +899,9 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 	attempts := make(chan attempt, 32)
 	firstAttempts := 0
 	deferred := make(chan struct{}, 1)
-	c, err := NewWithConfig("original", Config{
+	c := newRecoveryClient(t, "original", Config{
 		BatchSize: 1, maxConcurrentRequests: 1,
-		RetryAfter: func(attempt int) time.Duration {
-			if attempt == 9 {
-				select {
-				case deferred <- struct{}{}:
-				default:
-				}
-			}
-			return 10 * time.Millisecond
-		},
+		RetryAfter: signalDeferredRetry(deferred, 10*time.Millisecond),
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			var payload struct{ Batch []Track }
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -925,10 +919,6 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
 		}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
 	next := func() attempt {
 		select {
 		case attempt := <-attempts:
@@ -938,9 +928,7 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 		}
 		return attempt{}
 	}
-	if err := c.Enqueue(Track{UserId: "user", Event: "A"}); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "A"})
 	for i := 0; i < 10; i++ {
 		next()
 	}
@@ -949,9 +937,7 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("batch did not reach deferred delivery")
 	}
-	if err := c.Enqueue(Track{UserId: "user", Event: "B"}); err != nil {
-		t.Fatal(err)
-	}
+	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "B"})
 	last := next()
 	if last.event != "A" {
 		t.Fatalf("expected deferred attempt of A, got %s", last.event)
