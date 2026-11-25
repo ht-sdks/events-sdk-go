@@ -1050,6 +1050,50 @@ func TestClientResponseBodyError(t *testing.T) {
 	}
 }
 
+func TestRecoveredCallbackCanEnqueueWithFullBacklog(t *testing.T) {
+	deferred := make(chan struct{}, 1)
+	resume := make(chan struct{})
+	done := make(chan error, 1)
+	var c Client
+	requests := 0
+	c = newRecoveryClient(t, "key", Config{
+		BatchSize: 1, maxConcurrentRequests: 1,
+		RetryAfter: signalDeferredRetry(deferred, 0),
+		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			requests++
+			if requests <= fastAttempts {
+				return &http.Response{StatusCode: 503, Body: http.NoBody}, nil
+			}
+			<-resume
+			return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+		}),
+		Callback: testCallback{func(m Message) {
+			if m.(Track).Event == "first" {
+				done <- c.Enqueue(Track{UserId: "user", Event: "from callback"})
+			}
+		}, nil},
+	})
+	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "first"})
+	select {
+	case <-deferred:
+	case <-time.After(3 * time.Second):
+		close(resume)
+		t.Fatal("first batch was not deferred")
+	}
+	for i := 0; i < cap(c.(*client).queueSlots); i++ {
+		enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "waiting"})
+	}
+	close(resume)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovered callback blocked on the waiting budget")
+	}
+}
+
 func TestUploadCallbackCanFillInputQueue(t *testing.T) {
 	for _, success := range []bool{true, false} {
 		t.Run(fmt.Sprintf("success=%v", success), func(t *testing.T) {

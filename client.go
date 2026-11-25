@@ -262,25 +262,27 @@ func (c *client) prepare(msgs []message) *pendingUpload {
 
 // Send ordinary attempts on the same worker. A closed pause channel sends
 // the next eligible retry back to the queue. A nil channel identifies a deferred probe.
-func (c *client) send(batch *pendingUpload, pause <-chan struct{}, completed chan<- *pendingUpload) {
+func (c *client) send(batch *pendingUpload, pause <-chan struct{}, completed chan<- *pendingUpload, workers *sync.WaitGroup) {
+	defer workers.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			batch.err = fmt.Errorf("upload panic: %v", r)
 		}
-		// Keep terminal upload callbacks on this worker so they can enqueue while
-		// the batch loop continues draining the input channel.
-		if !batch.retryReady && (batch.err == nil || !recoverable(batch.err)) {
-			if batch.queued {
-				c.releaseSlots(batch.messages)
-				batch.queued = false
-			}
-			if batch.err == nil {
+		err := batch.err
+		terminal := !batch.retryReady && (err == nil || !recoverable(err))
+		// Advance a completed probe before its callback can block on a full backlog.
+		if pause == nil {
+			completed <- batch
+		} else {
+			defer func() { completed <- batch }()
+		}
+		if terminal {
+			if err == nil {
 				c.notifySuccess(batch.messages)
 			} else {
-				c.notifyFailure(batch.messages, batch.err)
+				c.notifyFailure(batch.messages, err)
 			}
 		}
-		completed <- batch
 	}()
 
 	for {
@@ -393,6 +395,8 @@ func (c *client) loop() {
 
 	// The loop owns admission and the deferred queue. One timer schedules
 	// its next probe without occupying an upload worker.
+	var workers sync.WaitGroup
+	defer workers.Wait()
 	completed := make(chan *pendingUpload, c.maxConcurrentRequests)
 	var pending []*pendingUpload
 	pause := make(chan struct{})
@@ -404,7 +408,8 @@ func (c *client) loop() {
 
 	upload := func(batch *pendingUpload, pause <-chan struct{}) {
 		active++
-		go c.send(batch, pause, completed)
+		workers.Add(1)
+		go c.send(batch, pause, completed, &workers)
 	}
 	submit := func(msgs []message) {
 		batch := c.prepare(msgs)
