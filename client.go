@@ -231,6 +231,8 @@ func (c *client) Close() (err error) {
 	return
 }
 
+const fastAttempts = 10
+
 type pendingUpload struct {
 	queued     bool
 	retryReady bool
@@ -241,17 +243,58 @@ type pendingUpload struct {
 }
 
 func (c *client) prepare(msgs []message) *pendingUpload {
-	body, err := json.Marshal(batch{
+	b, err := json.Marshal(batch{
 		MessageId: c.uid(),
 		SentAt:    c.now(),
 		Messages:  msgs,
 		Context:   c.DefaultContext,
 	})
+
 	if err != nil {
+		c.errorf("marshalling messages - %s", err)
 		c.notifyFailure(msgs, err)
 		return nil
 	}
-	return &pendingUpload{messages: msgs, body: body}
+	return &pendingUpload{messages: msgs, body: b}
+}
+
+// Send ordinary attempts on the same worker. A closed pause channel sends
+// the next eligible retry back to the queue. A nil channel identifies a deferred probe.
+func (c *client) send(batch *pendingUpload, pause <-chan struct{}, completed chan<- *pendingUpload) {
+	defer func() {
+		if r := recover(); r != nil {
+			batch.err = fmt.Errorf("upload panic: %v", r)
+		}
+		completed <- batch
+	}()
+
+	for {
+		if batch.err = c.upload(batch.body); batch.err == nil {
+			return
+		}
+		if (pause == nil || batch.attempt >= fastAttempts-1) && recoverable(batch.err) {
+			return
+		}
+
+		// Wait for either a retry timeout or the client to be closed.
+		select {
+		case <-time.After(c.retryInterval(batch.attempt)):
+		case <-c.quit:
+			return
+		}
+		if batch.attempt >= fastAttempts-1 {
+			return
+		}
+		batch.attempt++
+		select {
+		case <-c.quit:
+			return
+		case <-pause:
+			batch.retryReady = true
+			return
+		default:
+		}
+	}
 }
 
 func recoverable(err error) bool {
@@ -262,8 +305,8 @@ func recoverable(err error) bool {
 
 // Once fast retries are exhausted, reuse the last configured interval.
 func (c *client) retryInterval(attempt int) time.Duration {
-	if attempt > 9 {
-		attempt = 9
+	if attempt >= fastAttempts {
+		attempt = fastAttempts - 1
 	}
 	return c.RetryAfter(attempt)
 }
@@ -329,40 +372,20 @@ func (c *client) loop() {
 		maxBatchBytes: c.maxBatchBytes(),
 	}
 
-	// The loop owns admission, backoff timers and the deferred batches. Deferred transient retries
-	// wait outside the upload workers.
+	// The loop owns admission and the deferred queue. One timer schedules
+	// its next probe without occupying an upload worker.
 	completed := make(chan *pendingUpload, c.maxConcurrentRequests)
 	var pending []*pendingUpload
-	var probe *pendingUpload
+	pause := make(chan struct{})
 	var retry <-chan time.Time
 	active := 0
 	quit := c.quit
 	draining := false
 	var closeError error
 
-	upload := func(batch *pendingUpload) {
-		isProbe := batch == probe
+	upload := func(batch *pendingUpload, pause <-chan struct{}) {
 		active++
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					batch.err = fmt.Errorf("upload panic: %v", r)
-				}
-				completed <- batch
-			}()
-			batch.err = c.upload(batch.body)
-			if batch.err == nil || ((isProbe || batch.attempt >= 9) && recoverable(batch.err)) {
-				return
-			}
-			select {
-			case <-c.quit:
-			case <-time.After(c.retryInterval(batch.attempt)):
-				if batch.attempt < 9 {
-					batch.attempt++
-					batch.retryReady = true
-				}
-			}
-		}()
+		go c.send(batch, pause, completed)
 	}
 	releaseSlots := func(msgs []message) {
 		for range msgs {
@@ -370,9 +393,6 @@ func (c *client) loop() {
 		}
 	}
 	submit := func(msgs []message) {
-		if len(msgs) == 0 {
-			return
-		}
 		batch := c.prepare(msgs)
 		if batch != nil && closeError == nil && len(pending) != 0 {
 			batch.queued = true
@@ -386,19 +406,10 @@ func (c *client) loop() {
 		if closeError != nil {
 			c.notifyFailure(msgs, closeError)
 		} else if active < c.maxConcurrentRequests {
-			upload(batch)
+			upload(batch, pause)
 		} else {
 			c.notifyFailure(msgs, ErrTooManyRequests)
 		}
-	}
-	push := func(m Message) {
-		msg, err := makeMessage(m, maxMessageBytes)
-		if err != nil {
-			<-c.queueSlots
-			c.notifyFailure([]message{{m, nil}}, err)
-			return
-		}
-		submit(mq.push(msg))
 	}
 	for {
 		closing := quit == nil
@@ -411,49 +422,55 @@ func (c *client) loop() {
 			return
 		}
 		select {
-		case m := <-incoming:
-			push(m)
+		case msg := <-incoming:
+			c.push(&mq, msg, submit)
+
 		case <-tick.C:
-			submit(mq.flush())
+			c.flush(&mq, submit)
+
 		case <-retry:
 			retry = nil
-			probe = pending[0]
-			upload(probe)
+			upload(pending[0], nil)
 		case result := <-completed:
 			active--
 			if result.retryReady && !closing {
 				result.retryReady = false
-				// A cooldown may have started while this ordinary retry was waiting.
-				if len(pending) != 0 && result != probe {
+				if len(pending) > 0 {
 					pending = append(pending, result)
 				} else {
-					upload(result)
+					upload(result, pause)
 				}
 				continue
 			}
+			recovering := len(pending) > 0
+			wasProbe := recovering && pending[0] == result
 			terminal := result.err == nil || closing || !recoverable(result.err)
-			wasProbe := result == probe
 			if wasProbe {
 				pending[0] = nil
 				pending = pending[1:]
 				if terminal && result.queued {
 					releaseSlots(result.messages)
 				}
-				probe = nil
 			}
 			if result.err == nil {
 				c.notifySuccess(result.messages)
 			} else if terminal {
 				c.notifyFailure(result.messages, result.err)
 			} else {
+				if !recovering {
+					close(pause)
+				}
 				draining = true
 				result.attempt++
 				pending = append(pending, result)
 			}
+			if wasProbe && len(pending) == 0 {
+				pause = make(chan struct{})
+			}
 			if len(pending) == 0 && len(c.msgs) == 0 {
 				draining = false
 			}
-			if !closing && probe == nil && retry == nil && len(pending) != 0 {
+			if !closing && (!recovering || wasProbe) && len(pending) != 0 {
 				index := result.attempt - 1
 				if index < 0 {
 					index = 0
@@ -462,7 +479,7 @@ func (c *client) loop() {
 				if delay > time.Minute {
 					delay = time.Minute
 				}
-				if result.attempt >= 10 && delay < time.Second {
+				if result.attempt >= fastAttempts && delay < time.Second {
 					delay = time.Second
 				}
 				if wasProbe && result.err == nil {
@@ -474,9 +491,10 @@ func (c *client) loop() {
 			quit = nil
 			if len(pending) > 0 {
 				closeError = ErrClosed
-			}
-			if probe != nil {
-				pending = pending[1:]
+				if retry == nil {
+					// The worker will report the in-flight probe.
+					pending = pending[1:]
+				}
 			}
 			for _, batch := range pending {
 				err := batch.err
@@ -486,15 +504,40 @@ func (c *client) loop() {
 				c.notifyFailure(batch.messages, err)
 			}
 			pending = nil
-			probe = nil
 			retry = nil
 			c.admission.Lock()
 			c.admission.Unlock() // All concurrent enqueues have observed quit or finished sending.
 			for len(c.msgs) > 0 {
-				push(<-c.msgs)
+				c.push(&mq, <-c.msgs, submit)
 			}
-			submit(mq.flush())
+			c.flush(&mq, submit)
 		}
+	}
+}
+
+func (c *client) push(q *messageQueue, m Message, submit func([]message)) {
+	var msg message
+	var err error
+
+	if msg, err = makeMessage(m, maxMessageBytes); err != nil {
+		<-c.queueSlots
+		c.errorf("%s - %v", err, m)
+		c.notifyFailure([]message{{m, nil}}, err)
+		return
+	}
+
+	c.debugf("buffer (%d/%d) %v", len(q.pending), c.BatchSize, m)
+
+	if msgs := q.push(msg); msgs != nil {
+		c.debugf("exceeded messages batch limit with batch of %d messages – flushing", len(msgs))
+		submit(msgs)
+	}
+}
+
+func (c *client) flush(q *messageQueue, submit func([]message)) {
+	if msgs := q.flush(); msgs != nil {
+		c.debugf("flushing %d messages", len(msgs))
+		submit(msgs)
 	}
 }
 

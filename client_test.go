@@ -892,6 +892,11 @@ func TestOrdinaryTransientRetryLeavesOtherUploadSlotsAvailable(t *testing.T) {
 }
 
 func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
+	t.Run("new batch", func(t *testing.T) { testDeferredBatchYields(t, false) })
+	t.Run("batch in ordinary backoff", func(t *testing.T) { testDeferredBatchYields(t, true) })
+}
+
+func testDeferredBatchYields(t *testing.T, retrying bool) {
 	type attempt struct {
 		event string
 		at    time.Time
@@ -899,9 +904,28 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 	attempts := make(chan attempt, 32)
 	firstAttempts := 0
 	deferred := make(chan struct{}, 1)
+	slots := 1
+	retryAfter := signalDeferredRetry(deferred, 10*time.Millisecond)
+	waiting := make(chan struct{})
+	resume := make(chan struct{}, 1)
+	if retrying {
+		slots = 2
+		ordinaryBackoff := retryAfter
+		retryAfter = func(attempt int) time.Duration {
+			// B enters backoff before A is enqueued.
+			select {
+			case <-waiting:
+			default:
+				close(waiting)
+				<-resume
+			}
+			return ordinaryBackoff(attempt)
+		}
+	}
+	failB := retrying
 	c := newRecoveryClient(t, "original", Config{
-		BatchSize: 1, maxConcurrentRequests: 1,
-		RetryAfter: signalDeferredRetry(deferred, 10*time.Millisecond),
+		BatchSize: 1, maxConcurrentRequests: slots,
+		RetryAfter: retryAfter,
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			var payload struct{ Batch []Track }
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -914,6 +938,9 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 				if firstAttempts <= 11 {
 					status = http.StatusTooManyRequests
 				}
+			} else if failB {
+				failB = false
+				status = http.StatusServiceUnavailable
 			}
 			attempts <- attempt{event, time.Now()}
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
@@ -928,6 +955,16 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 		}
 		return attempt{}
 	}
+	defer close(resume)
+	if retrying {
+		enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "B"})
+		next()
+		select {
+		case <-waiting:
+		case <-time.After(3 * time.Second):
+			t.Fatal("B did not enter ordinary backoff")
+		}
+	}
 	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "A"})
 	for i := 0; i < 10; i++ {
 		next()
@@ -937,7 +974,11 @@ func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("batch did not reach deferred delivery")
 	}
-	enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "B"})
+	if retrying {
+		resume <- struct{}{}
+	} else {
+		enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "B"})
+	}
 	last := next()
 	if last.event != "A" {
 		t.Fatalf("expected deferred attempt of A, got %s", last.event)
