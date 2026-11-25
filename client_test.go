@@ -793,18 +793,23 @@ func TestUnauthorizedExhaustsOriginalAttempts(t *testing.T) {
 
 func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 	done := make(chan error, 3)
-	deferred := make(chan struct{})
+	deferred := make(chan struct{}, 1)
 	attempts := 0
 	c, err := NewWithConfig("original", Config{
 		BatchSize: 1, maxConcurrentRequests: 1,
-		RetryAfter: func(int) time.Duration { return time.Millisecond },
-		Callback:   testCallback{func(Message) { done <- nil }, func(_ Message, err error) { done <- err }},
+		RetryAfter: func(attempt int) time.Duration {
+			if attempt == 9 {
+				select {
+				case deferred <- struct{}{}:
+				default:
+				}
+			}
+			return time.Millisecond
+		},
+		Callback: testCallback{func(Message) { done <- nil }, func(_ Message, err error) { done <- err }},
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			attempts++
 			status := http.StatusServiceUnavailable
-			if attempts == 10 {
-				close(deferred)
-			}
 			if attempts > 10 {
 				status = http.StatusOK
 			}
@@ -837,6 +842,50 @@ func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 		case <-time.After(4 * time.Second):
 			t.Fatal("pending events did not recover")
 		}
+	}
+}
+
+func TestOrdinaryTransientRetryLeavesOtherUploadSlotsAvailable(t *testing.T) {
+	waiting := make(chan struct{}, 1)
+	delivered := make(chan Message, 2)
+	c, err := NewWithConfig("key", Config{
+		BatchSize: 1, maxConcurrentRequests: 2,
+		RetryAfter: func(int) time.Duration { waiting <- struct{}{}; return 2 * time.Minute },
+		Callback:   testCallback{func(m Message) { delivered <- m }, nil},
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			var payload struct{ Batch []Track }
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
+			status := http.StatusOK
+			if payload.Batch[0].Event == "A" {
+				status = http.StatusServiceUnavailable
+			}
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Enqueue(Track{UserId: "user", Event: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-waiting:
+	case <-time.After(time.Second):
+		t.Fatal("A did not enter ordinary backoff")
+	}
+	if err := c.Enqueue(Track{UserId: "user", Event: "B"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case m := <-delivered:
+		if m.(Track).Event != "B" {
+			t.Fatalf("unexpected delivery: %v", m)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("A's ordinary retry blocked B")
 	}
 }
 

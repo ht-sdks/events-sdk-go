@@ -341,6 +341,7 @@ func (c *client) loop() {
 	var closeError error
 
 	upload := func(batch *pendingUpload) {
+		isProbe := batch == probe
 		active++
 		go func() {
 			defer func() {
@@ -350,7 +351,7 @@ func (c *client) loop() {
 				completed <- batch
 			}()
 			batch.err = c.upload(batch.body)
-			if batch.err == nil || recoverable(batch.err) {
+			if batch.err == nil || ((isProbe || batch.attempt >= 9) && recoverable(batch.err)) {
 				return
 			}
 			select {
