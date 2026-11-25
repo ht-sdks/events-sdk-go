@@ -824,15 +824,16 @@ func signalDeferredRetry(deferred chan<- struct{}, delay time.Duration) func(int
 func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 	done := make(chan error, 3)
 	deferred := make(chan struct{}, 1)
-	attempts := 0
+	var requests []time.Time
 	c := newRecoveryClient(t, "original", Config{
 		BatchSize: 1, maxConcurrentRequests: 1,
-		RetryAfter: signalDeferredRetry(deferred, time.Millisecond),
+		RetryAfter: signalDeferredRetry(deferred, 0),
 		Callback:   testCallback{func(Message) { done <- nil }, func(_ Message, err error) { done <- err }},
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			attempts++
+			requests = append(requests, time.Now())
 			status := http.StatusServiceUnavailable
-			if attempts > 10 {
+			// The original batch recovers; the fresh second batch fails its first probe.
+			if len(requests) > fastAttempts && len(requests) != fastAttempts+2 {
 				status = http.StatusOK
 			}
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
@@ -858,6 +859,9 @@ func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 		case <-time.After(4 * time.Second):
 			t.Fatal("pending events did not recover")
 		}
+	}
+	if len(requests) != fastAttempts+4 || requests[fastAttempts+2].Sub(requests[fastAttempts+1]) < time.Second {
+		t.Fatal("fresh batch failure did not gate the next probe", requests)
 	}
 }
 

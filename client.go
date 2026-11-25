@@ -483,7 +483,7 @@ func (c *client) loop() {
 				if delay > time.Minute {
 					delay = time.Minute
 				}
-				if result.attempt >= fastAttempts && delay < time.Second {
+				if !terminal && delay < time.Second {
 					delay = time.Second
 				}
 				if wasProbe && result.err == nil {
