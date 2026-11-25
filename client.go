@@ -414,6 +414,7 @@ func (c *client) loop() {
 		} else if active < c.maxConcurrentRequests {
 			upload(batch, pause)
 		} else {
+			c.errorf("sending messages failed - %s", ErrTooManyRequests)
 			c.notifyFailure(msgs, ErrTooManyRequests)
 		}
 	}

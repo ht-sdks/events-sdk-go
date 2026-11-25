@@ -1054,8 +1054,9 @@ func TestClientMaxConcurrentRequests(t *testing.T) {
 	reschan := make(chan bool, 1)
 	errchan := make(chan error, 1)
 
+	logged := make(chan string, 1)
 	client, _ := NewWithConfig("0123456789", Config{
-		Logger: testLogger{t.Logf, t.Logf},
+		Logger: testLogger{t.Logf, func(format string, args ...interface{}) { logged <- fmt.Sprintf(format, args...) }},
 		Callback: testCallback{
 			func(m Message) { reschan <- true },
 			func(m Message, e error) { errchan <- e },
@@ -1071,6 +1072,14 @@ func TestClientMaxConcurrentRequests(t *testing.T) {
 	client.Enqueue(Track{UserId: "A", Event: "B"})
 	client.Close()
 
+	select {
+	case msg := <-logged:
+		if !strings.Contains(msg, ErrTooManyRequests.Error()) {
+			t.Errorf("unexpected saturation log: %s", msg)
+		}
+	default:
+		t.Error("missing error log for saturated upload slots")
+	}
 	if _, ok := <-reschan; !ok {
 		t.Error("one of the requests should have succeeded but the result channel was empty")
 	}
