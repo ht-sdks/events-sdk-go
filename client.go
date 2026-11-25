@@ -267,6 +267,19 @@ func (c *client) send(batch *pendingUpload, pause <-chan struct{}, completed cha
 		if r := recover(); r != nil {
 			batch.err = fmt.Errorf("upload panic: %v", r)
 		}
+		// Keep terminal upload callbacks on this worker so they can enqueue while
+		// the batch loop continues draining the input channel.
+		if !batch.retryReady && (batch.err == nil || !recoverable(batch.err)) {
+			if batch.queued {
+				c.releaseSlots(batch.messages)
+				batch.queued = false
+			}
+			if batch.err == nil {
+				c.notifySuccess(batch.messages)
+			} else {
+				c.notifyFailure(batch.messages, batch.err)
+			}
+		}
 		completed <- batch
 	}()
 
@@ -393,11 +406,6 @@ func (c *client) loop() {
 		active++
 		go c.send(batch, pause, completed)
 	}
-	releaseSlots := func(msgs []message) {
-		for range msgs {
-			<-c.queueSlots
-		}
-	}
 	submit := func(msgs []message) {
 		batch := c.prepare(msgs)
 		if batch != nil && closeError == nil && len(pending) != 0 {
@@ -405,7 +413,7 @@ func (c *client) loop() {
 			pending = append(pending, batch)
 			return
 		}
-		releaseSlots(msgs)
+		c.releaseSlots(msgs)
 		if batch == nil {
 			return
 		}
@@ -456,14 +464,12 @@ func (c *client) loop() {
 				pending[0] = nil
 				pending = pending[1:]
 				if terminal && result.queued {
-					releaseSlots(result.messages)
+					c.releaseSlots(result.messages)
 				}
 			}
-			if result.err == nil {
-				c.notifySuccess(result.messages)
-			} else if terminal {
+			if closing && result.err != nil && recoverable(result.err) {
 				c.notifyFailure(result.messages, result.err)
-			} else {
+			} else if !terminal {
 				if !recovering {
 					close(pause)
 				}
@@ -519,6 +525,12 @@ func (c *client) loop() {
 			}
 			c.flush(&mq, submit)
 		}
+	}
+}
+
+func (c *client) releaseSlots(msgs []message) {
+	for range msgs {
+		<-c.queueSlots
 	}
 }
 

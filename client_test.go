@@ -1050,6 +1050,44 @@ func TestClientResponseBodyError(t *testing.T) {
 	}
 }
 
+func TestUploadCallbackCanFillInputQueue(t *testing.T) {
+	for _, success := range []bool{true, false} {
+		t.Run(fmt.Sprintf("success=%v", success), func(t *testing.T) {
+			var c Client
+			done := make(chan error, 1)
+			callback := func(m Message) {
+				if m.(Track).Event != "first" {
+					return
+				}
+				for i := 0; i <= 100; i++ {
+					if err := c.Enqueue(Track{UserId: "user", Event: "next"}); err != nil {
+						done <- err
+						return
+					}
+				}
+				done <- nil
+			}
+			transport := testTransportOK
+			if !success {
+				transport = testTransportBadRequest
+			}
+			c = newRecoveryClient(t, "key", Config{
+				BatchSize: 1, Transport: transport, RetryAfter: func(int) time.Duration { return 0 },
+				Callback: testCallback{callback, func(m Message, _ error) { callback(m) }},
+			})
+			enqueueRecoveryTrack(t, c, Track{UserId: "user", Event: "first"})
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("upload callback blocked the input queue")
+			}
+		})
+	}
+}
+
 func TestClientMaxConcurrentRequests(t *testing.T) {
 	reschan := make(chan bool, 1)
 	errchan := make(chan error, 1)
