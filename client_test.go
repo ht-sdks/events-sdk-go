@@ -682,7 +682,7 @@ func TestClientMarshalContextError(t *testing.T) {
 }
 
 func TestClientNewRequestError(t *testing.T) {
-	for _, endpoint := range []string{"://localhost:80", "ftp://localhost"} {
+	for _, endpoint := range []string{"://localhost:80", "ftp://localhost", "http:///collector"} {
 		t.Run(endpoint, func(t *testing.T) {
 			errchan := make(chan error, 1)
 
