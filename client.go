@@ -45,8 +45,9 @@ type client struct {
 	// This channel is where the `Enqueue` method writes messages so they can be
 	// picked up and pushed by the backend goroutine taking care of applying the
 	// batching rules.
-	msgs      chan Message
-	admission sync.RWMutex
+	msgs       chan Message
+	queueSlots chan struct{}
+	admission  sync.RWMutex
 
 	// These two channels are used to synchronize the client shutting down when
 	// `Close` is called.
@@ -89,6 +90,8 @@ func NewWithConfig(writeKey string, config Config) (cli Client, err error) {
 		http:     makeHttpClient(config.Transport),
 	}
 
+	// Count messages waiting in the input channel, batch builder or recovery queue together.
+	c.queueSlots = make(chan struct{}, cap(c.msgs)+c.BatchSize)
 	go c.loop()
 
 	cli = c
@@ -201,9 +204,15 @@ func (c *client) Enqueue(msg Message) (err error) {
 	default:
 	}
 	select {
+	case c.queueSlots <- struct{}{}:
+	case <-c.quit:
+		return ErrClosed
+	}
+	select {
 	case c.msgs <- msg:
 		return nil
 	case <-c.quit:
+		<-c.queueSlots
 		return ErrClosed
 	}
 }
@@ -223,10 +232,12 @@ func (c *client) Close() (err error) {
 }
 
 type pendingUpload struct {
-	messages []message
-	body     []byte
-	err      error
-	attempt  int
+	queued     bool
+	retryReady bool
+	messages   []message
+	body       []byte
+	err        error
+	attempt    int
 }
 
 func (c *client) prepare(msgs []message) *pendingUpload {
@@ -338,35 +349,41 @@ func (c *client) loop() {
 				}
 				completed <- batch
 			}()
-			for {
-				batch.err = c.upload(batch.body)
-				if batch.err == nil || recoverable(batch.err) {
-					return
+			batch.err = c.upload(batch.body)
+			if batch.err == nil || recoverable(batch.err) {
+				return
+			}
+			select {
+			case <-c.quit:
+			case <-time.After(c.retryInterval(batch.attempt)):
+				if batch.attempt < 9 {
+					batch.attempt++
+					batch.retryReady = true
 				}
-				select {
-				case <-c.quit:
-					return
-				case <-time.After(c.retryInterval(batch.attempt)):
-				}
-				if batch.attempt >= 9 {
-					return
-				}
-				batch.attempt++
 			}
 		}()
+	}
+	releaseSlots := func(msgs []message) {
+		for range msgs {
+			<-c.queueSlots
+		}
 	}
 	submit := func(msgs []message) {
 		if len(msgs) == 0 {
 			return
 		}
 		batch := c.prepare(msgs)
+		if batch != nil && closeError == nil && len(pending) != 0 {
+			batch.queued = true
+			pending = append(pending, batch)
+			return
+		}
+		releaseSlots(msgs)
 		if batch == nil {
 			return
 		}
 		if closeError != nil {
 			c.notifyFailure(msgs, closeError)
-		} else if len(pending) != 0 {
-			pending = append(pending, batch)
 		} else if active < c.maxConcurrentRequests {
 			upload(batch)
 		} else {
@@ -376,6 +393,7 @@ func (c *client) loop() {
 	push := func(m Message) {
 		msg, err := makeMessage(m, maxMessageBytes)
 		if err != nil {
+			<-c.queueSlots
 			c.notifyFailure([]message{{m, nil}}, err)
 			return
 		}
@@ -384,8 +402,8 @@ func (c *client) loop() {
 	for {
 		closing := quit == nil
 		incoming := c.msgs
-		if closing || len(pending) >= c.maxConcurrentRequests || (draining && active >= c.maxConcurrentRequests) {
-			// Leave new events in the bounded input channel while the source is held.
+		if closing || (draining && len(pending) == 0 && active >= c.maxConcurrentRequests) {
+			// Wait for upload capacity when draining the last queued work.
 			incoming = nil
 		}
 		if closing && active == 0 {
@@ -402,9 +420,24 @@ func (c *client) loop() {
 			upload(probe)
 		case result := <-completed:
 			active--
+			if result.retryReady && !closing {
+				result.retryReady = false
+				// A cooldown may have started while this ordinary retry was waiting.
+				if len(pending) != 0 && result != probe {
+					pending = append(pending, result)
+				} else {
+					upload(result)
+				}
+				continue
+			}
 			terminal := result.err == nil || closing || !recoverable(result.err)
 			wasProbe := result == probe
 			if wasProbe {
+				pending[0] = nil
+				pending = pending[1:]
+				if terminal && result.queued {
+					releaseSlots(result.messages)
+				}
 				probe = nil
 			}
 			if result.err == nil {
@@ -414,20 +447,13 @@ func (c *client) loop() {
 			} else {
 				draining = true
 				result.attempt++
-				if !wasProbe {
-					pending = append(pending, result)
-				}
-			}
-			if wasProbe && terminal {
-				pending[0] = nil
-				pending = pending[1:]
+				pending = append(pending, result)
 			}
 			if len(pending) == 0 && len(c.msgs) == 0 {
 				draining = false
 			}
 			if !closing && probe == nil && retry == nil && len(pending) != 0 {
-				first := pending[0]
-				index := first.attempt - 1
+				index := result.attempt - 1
 				if index < 0 {
 					index = 0
 				}
@@ -435,7 +461,7 @@ func (c *client) loop() {
 				if delay > time.Minute {
 					delay = time.Minute
 				}
-				if first.attempt >= 10 && delay < time.Second {
+				if result.attempt >= 10 && delay < time.Second {
 					delay = time.Second
 				}
 				if wasProbe && result.err == nil {

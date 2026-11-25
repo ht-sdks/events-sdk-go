@@ -840,6 +840,82 @@ func TestDeferredUploadsRecoverAfterFastRetries(t *testing.T) {
 	}
 }
 
+func TestDeferredBatchYieldsAfterSourceCooldown(t *testing.T) {
+	type attempt struct {
+		event string
+		at    time.Time
+	}
+	attempts := make(chan attempt, 32)
+	firstAttempts := 0
+	deferred := make(chan struct{}, 1)
+	c, err := NewWithConfig("original", Config{
+		BatchSize: 1, maxConcurrentRequests: 1,
+		RetryAfter: func(attempt int) time.Duration {
+			if attempt == 9 {
+				select {
+				case deferred <- struct{}{}:
+				default:
+				}
+			}
+			return 10 * time.Millisecond
+		},
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			var payload struct{ Batch []Track }
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
+			event := payload.Batch[0].Event
+			status := http.StatusOK
+			if event == "A" {
+				firstAttempts++
+				if firstAttempts <= 11 {
+					status = http.StatusTooManyRequests
+				}
+			}
+			attempts <- attempt{event, time.Now()}
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	next := func() attempt {
+		select {
+		case attempt := <-attempts:
+			return attempt
+		case <-time.After(3 * time.Second):
+			t.Fatal("timed out waiting for upload")
+		}
+		return attempt{}
+	}
+	if err := c.Enqueue(Track{UserId: "user", Event: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		next()
+	}
+	select {
+	case <-deferred:
+	case <-time.After(3 * time.Second):
+		t.Fatal("batch did not reach deferred delivery")
+	}
+	if err := c.Enqueue(Track{UserId: "user", Event: "B"}); err != nil {
+		t.Fatal(err)
+	}
+	last := next()
+	if last.event != "A" {
+		t.Fatalf("expected deferred attempt of A, got %s", last.event)
+	}
+	healthy := next()
+	if healthy.event != "B" || healthy.at.Sub(last.at) < time.Second {
+		t.Fatalf("expected B after the source cooldown, got %s after %s", healthy.event, healthy.at.Sub(last.at))
+	}
+	if got := next(); got.event != "A" {
+		t.Errorf("expected A to recover, got %s", got.event)
+	}
+}
+
 func TestClientResponse400(t *testing.T) {
 	errchan := make(chan error, 1)
 
