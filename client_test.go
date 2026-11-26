@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -728,39 +730,117 @@ func TestClientRoundTripperError(t *testing.T) {
 	}
 }
 
-func TestClientRetryError(t *testing.T) {
-	errchan := make(chan error, 1)
-
-	client, _ := NewWithConfig("0123456789", Config{
-		Logger: testLogger{t.Logf, t.Logf},
-		Callback: testCallback{
-			nil,
-			func(m Message, e error) { errchan <- e },
+func TestDeferredBatchReleasesWorkerAndRetainsPayload(t *testing.T) {
+	var mu sync.Mutex
+	var first []byte
+	attempts := 0
+	deferred := make(chan struct{})
+	delivered := make(chan string, 2)
+	client, err := NewWithConfig("test", Config{
+		BatchSize: 1, maxConcurrentRequests: 1,
+		RetryAfter: func(i int) time.Duration {
+			if i == 9 {
+				return 50 * time.Millisecond
+			}
+			return time.Millisecond
 		},
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(r.Body)
+			if bytes.Contains(body, []byte(`"event":"A"`)) {
+				mu.Lock()
+				defer mu.Unlock()
+				attempts++
+				if first == nil {
+					first = body
+				}
+				if !bytes.Equal(first, body) {
+					t.Error("recovery changed the batch")
+				}
+				if attempts <= 11 {
+					if attempts == 11 {
+						close(deferred)
+					}
+					return nil, testError
+				}
+			}
+			return testTransportOK.RoundTrip(r)
+		}),
+		Callback: testCallback{func(m Message) { delivered <- m.(Track).Event }, func(_ Message, err error) { t.Error(err) }},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	client.Enqueue(Track{UserId: "test", Event: "A"})
+	select {
+	case <-deferred:
+	case <-time.After(3 * time.Second):
+		t.Fatal("A never retried")
+	}
+	// The transport has returned and its executor slot is available between probes.
+	time.Sleep(5 * time.Millisecond)
+	client.Enqueue(Track{UserId: "test", Event: "B"})
+	for _, want := range []string{"B", "A"} {
+		select {
+		case got := <-delivered:
+			if got != want {
+				t.Fatalf("got %s, want %s", got, want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("delivery timed out")
+		}
+	}
+}
+
+func TestCloseReleasesDeferredCapacityAndBlockedProducer(t *testing.T) {
+	parked := make(chan struct{}, 1)
+	var failures int32
+	cli, err := NewWithConfig("test", Config{
+		BatchSize: 1,
+		RetryAfter: func(attempt int) time.Duration {
+			if attempt == 9 {
+				parked <- struct{}{}
+				return time.Hour
+			}
+			return 0
+		},
+		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return nil, testError
 		}),
-		BatchSize:  1,
-		RetryAfter: func(i int) time.Duration { return time.Millisecond },
+		Callback: testCallback{nil, func(_ Message, _ error) { atomic.AddInt32(&failures, 1) }},
 	})
-
-	client.Enqueue(Track{UserId: "A", Event: "B"})
-
-	// Each retry should happen ~1 millisecond, this should give enough time to
-	// the test to trigger the failure callback.
-	time.Sleep(50 * time.Millisecond)
-
-	if err := <-errchan; err == nil {
-		t.Error("failure callback not triggered for a retry falure")
-
-	} else if e, ok := err.(*url.Error); !ok {
-		t.Errorf("invalid error returned by round tripper: %T: %s", err, err)
-
-	} else if e.Err != testError {
-		t.Errorf("invalid error returned by round tripper: %T: %s", e.Err, e.Err)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	client.Close()
+	event := Track{UserId: "test", Event: "A"}
+	capacity := cap(cli.(*client).slots)
+	for i := 0; i < capacity; i++ {
+		if err := cli.Enqueue(event); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-parked:
+		case <-time.After(3 * time.Second):
+			t.Fatal("batch did not enter recovery")
+		}
+	}
+	enqueued := make(chan error, 1)
+	go func() { enqueued <- cli.Enqueue(event) }()
+	select {
+	case <-enqueued:
+		t.Fatal("admitted an event while deferred work filled the queue")
+	case <-time.After(5 * time.Millisecond):
+	}
+	if err := cli.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-enqueued; err != ErrClosed {
+		t.Fatalf("blocked producer returned %v", err)
+	}
+	if int(failures) != capacity {
+		t.Fatalf("closed %d deferred events, want %d", failures, capacity)
+	}
 }
 
 func TestClientResponse400(t *testing.T) {

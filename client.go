@@ -45,7 +45,9 @@ type client struct {
 	// This channel is where the `Enqueue` method writes messages so they can be
 	// picked up and pushed by the backend goroutine taking care of applying the
 	// batching rules.
-	msgs chan Message
+	msgs      chan Message
+	slots     chan struct{}
+	admission sync.RWMutex
 
 	// These two channels are used to synchronize the client shutting down when
 	// `Close` is called.
@@ -88,6 +90,13 @@ func NewWithConfig(writeKey string, config Config) (cli Client, err error) {
 		http:     makeHttpClient(config.Transport),
 	}
 
+	// Share the space in the input channel and batch builder with deferred work.
+	batchCapacity := c.BatchSize
+	if batchCapacity > maxBatchBytes {
+		// Even a one-byte message counts towards the existing batch byte limit.
+		batchCapacity = maxBatchBytes
+	}
+	c.slots = make(chan struct{}, cap(c.msgs)+batchCapacity)
 	go c.loop()
 
 	cli = c
@@ -192,17 +201,20 @@ func (c *client) Enqueue(msg Message) (err error) {
 		return
 	}
 
-	defer func() {
-		// When the `msgs` channel is closed writing to it will trigger a panic.
-		// To avoid letting the panic propagate to the caller we recover from it
-		// and instead report that the client has been closed and shouldn't be
-		// used anymore.
-		if recover() != nil {
-			err = ErrClosed
-		}
-	}()
-
-	c.msgs <- msg
+	select {
+	case c.slots <- struct{}{}:
+	case <-c.quit:
+		return ErrClosed
+	}
+	c.admission.RLock()
+	defer c.admission.RUnlock()
+	select {
+	case <-c.quit:
+		<-c.slots
+		return ErrClosed
+	default:
+		c.msgs <- msg
+	}
 	return
 }
 
@@ -222,6 +234,9 @@ func (c *client) Close() (err error) {
 
 // Asychronously send a batched requests.
 func (c *client) sendAsync(msgs []message, wg *sync.WaitGroup, ex *executor) {
+	for range msgs {
+		<-c.slots
+	}
 	wg.Add(1)
 
 	if !ex.do(func() {
@@ -234,7 +249,7 @@ func (c *client) sendAsync(msgs []message, wg *sync.WaitGroup, ex *executor) {
 				c.errorf("panic - %s", err)
 			}
 		}()
-		c.send(msgs)
+		c.send(msgs, wg, ex)
 	}) {
 		wg.Done()
 		c.errorf("sending messages failed - %s", ErrTooManyRequests)
@@ -243,7 +258,7 @@ func (c *client) sendAsync(msgs []message, wg *sync.WaitGroup, ex *executor) {
 }
 
 // Send batch request.
-func (c *client) send(msgs []message) {
+func (c *client) send(msgs []message, wg *sync.WaitGroup, ex *executor) {
 	const attempts = 10
 
 	b, err := json.Marshal(batch{
@@ -260,8 +275,16 @@ func (c *client) send(msgs []message) {
 	}
 
 	for i := 0; i != attempts; i++ {
-		if err = c.upload(b); err == nil {
+		transient, failure := c.upload(b)
+		err = failure
+		if err == nil {
 			c.notifySuccess(msgs)
+			return
+		}
+
+		if i == attempts-1 && transient && c.reserveDeferred(len(msgs)) {
+			wg.Add(1)
+			go c.retryDeferred(msgs, b, err, c.RetryAfter(i), wg, ex)
 			return
 		}
 
@@ -279,13 +302,77 @@ func (c *client) send(msgs []message) {
 	c.notifyFailure(msgs, err)
 }
 
+func (c *client) reserveDeferred(count int) bool {
+	for i := 0; i < count; i++ {
+		select {
+		case c.slots <- struct{}{}:
+		default:
+			for j := 0; j < i; j++ {
+				<-c.slots
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func (c *client) retryDeferred(msgs []message, body []byte, err error, delay time.Duration, wg *sync.WaitGroup, ex *executor) {
+	defer wg.Done()
+	type result struct {
+		transient bool
+		err       error
+	}
+	done := make(chan result, 1)
+	// A deferred batch owns queue slots but only occupies an executor slot during a request.
+	if delay <= 0 {
+		delay = c.Interval
+	}
+	for {
+		select {
+		case <-time.After(delay):
+			if !ex.do(func() {
+				var response result
+				defer func() {
+					if r := recover(); r != nil {
+						response = result{err: fmt.Errorf("upload panic: %v", r)}
+					}
+					done <- response
+				}()
+				response.transient, response.err = c.upload(body)
+			}) {
+				continue
+			}
+			r := <-done
+			err = r.err
+			if r.transient {
+				continue
+			}
+		case <-c.quit:
+		}
+		break
+	}
+	for range msgs {
+		<-c.slots
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			c.errorf("panic - %s", r)
+		}
+	}()
+	if err != nil {
+		c.notifyFailure(msgs, err)
+	} else {
+		c.notifySuccess(msgs)
+	}
+}
+
 // Upload serialized batch message.
-func (c *client) upload(b []byte) error {
+func (c *client) upload(b []byte) (bool, error) {
 	url := c.Endpoint + "/v1/batch"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(b))
 	if err != nil {
 		c.errorf("creating request - %s", err)
-		return err
+		return false, err
 	}
 
 	req.Header.Add("User-Agent", "events-sdk-go (version: "+Version+")")
@@ -297,11 +384,12 @@ func (c *client) upload(b []byte) error {
 
 	if err != nil {
 		c.errorf("sending request - %s", err)
-		return err
+		return req.URL.Host != "" && (req.URL.Scheme == "http" || req.URL.Scheme == "https"), err
 	}
 
 	defer res.Body.Close()
-	return c.report(res)
+	status := res.StatusCode
+	return status == 408 || status == 429 || (status >= 500 && status < 600), c.report(res)
 }
 
 // Report on response body.
@@ -327,13 +415,13 @@ func (c *client) loop() {
 	defer close(c.shutdown)
 
 	wg := &sync.WaitGroup{}
-	defer wg.Wait()
 
 	tick := time.NewTicker(c.Interval)
 	defer tick.Stop()
 
 	ex := newExecutor(c.maxConcurrentRequests)
 	defer ex.close()
+	defer wg.Wait()
 
 	mq := messageQueue{
 		maxBatchSize:  c.BatchSize,
@@ -353,7 +441,12 @@ func (c *client) loop() {
 
 			// Drain the msg channel, we have to close it first so no more
 			// messages can be pushed and otherwise the loop would never end.
-			close(c.msgs)
+			// Let sends already holding the read lock complete while draining.
+			go func() {
+				c.admission.Lock()
+				close(c.msgs)
+				c.admission.Unlock()
+			}()
 			for msg := range c.msgs {
 				c.push(&mq, msg, wg, ex)
 			}
@@ -370,6 +463,7 @@ func (c *client) push(q *messageQueue, m Message, wg *sync.WaitGroup, ex *execut
 	var err error
 
 	if msg, err = makeMessage(m, maxMessageBytes); err != nil {
+		<-c.slots
 		c.errorf("%s - %v", err, m)
 		c.notifyFailure([]message{{m, nil}}, err)
 		return
